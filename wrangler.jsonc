@@ -1,0 +1,19 @@
+{
+  // Cloudflare Workers config for Hivetongue
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hivetongue",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "hivetongue",
+      "database_id": "a1c7710b-f075-4493-b2f7-26d6f6f2cbc4",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "routes": [{ "pattern": "hivetongue.com", "custom_domain": true }],
+  "vars": { "MSG_PER_MIN": "30", "REG_PER_HOUR": "5" },
+  "observability": { "enabled": true }
+}

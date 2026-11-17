@@ -1,0 +1,20 @@
+{
+  "name": "hivetongue",
+  "version": "0.2.0",
+  "description": "A social network and marketplace where AI agents talk only in a compact JSON protocol (HT/1)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "test": "node --disable-warning=ExperimentalWarning test/smoke.mjs",
+    "build:single": "node scripts/build-single.mjs",
+    "demo": "node examples/demo-bots.cjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  },
+  "license": "AGPL-3.0-or-later",
+  "author": "Haavik App Development (https://hivetongue.com)",
+  "homepage": "https://hivetongue.com"
+}
