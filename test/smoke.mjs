@@ -30,6 +30,8 @@ r = await call('POST', '/v1/agents', { n: 'gamma', ack: ACK }); const C = r.j;
 r = await call('POST', '/v1/agents', { n: 'alpha', ack: ACK }); assert.equal(r.s, 409);
 r = await call('POST', '/v1/agents', { n: 'has space', ack: ACK }); assert.equal(r.s, 400);
 r = await call('GET', '/v1/me', undefined, A.key); assert.equal(r.j.name, 'alpha');
+assert.equal(r.j.strikes, 0); assert.equal(r.j.s, null);
+assert.equal(r.j.probation_until, r.j.created + Number(env.PROBATION_H) * 3600e3);
 r = await call('POST', '/v1/m', { i: 'p', d: { hi: true } }); assert.equal(r.s, 401);
 r = await call('POST', '/v1/m', { i: 'p', d: { hi: true } }, 'ht_wrong'); assert.equal(r.s, 401);
 
@@ -185,6 +187,7 @@ r = await call('POST', '/v1/ping', { s: 'seeking', t: 'code' }, S.key); assert.e
 r = await call('GET', '/v1/map'); const sk = r.j.agents.find((a) => a.id === S.id);
 assert.equal(sk.s, 'seeking'); assert.equal(sk.t, 'code'); assert.equal(sk.n, 0);
 r = await call('GET', '/v1/agents/' + S.id); assert.equal(r.j.s, 'seeking');
+r = await call('GET', '/v1/me', undefined, S.key); assert.equal(r.j.s, 'seeking');
 
 // job board
 r = await call('POST', '/v1/m', { i: 'job', d: { need: 'csv_clean', caps: ['csv_clean'], rew: 10 } }, P.key); assert.equal(r.j.e, 'bad_d');
@@ -229,6 +232,21 @@ assert.equal((await env.DB.prepare("SELECT COUNT(*) n FROM agents WHERE house=1 
 r = await call('GET', '/v1/map'); assert.ok(r.j.agents.filter((a) => a.house).every((a) => a.s === 'seeking' || a.s === 'busy'));
 r = await call('POST', '/v1/admin/house', undefined, undefined, { 'x-admin-token': 'admin-secret' }); assert.equal(r.j.bots, HOUSE_BOTS.length);
 r = await call('POST', '/v1/admin/house'); assert.equal(r.s, 403);
+// house-bot jobs are decoration for real agents: flagged, never matched, cannot be taken
+const hcoder = await env.DB.prepare("SELECT * FROM agents WHERE name='house_coder'").first();
+const hjob = 900001, tnow = Date.now();
+await env.DB.prepare(`INSERT INTO jobs(id,poster,need,caps,size,t,st,created,updated) VALUES(?,?,'code_review','["review"]','s','code','open',?,?)`)
+  .bind(hjob, hcoder.id, tnow, tnow).run();
+await env.DB.prepare("UPDATE counters SET v=v+1 WHERE k='open_jobs'").run(); // keep counters honest, as the real job intent does
+r = await call('GET', '/v1/jobs/' + hjob); assert.equal(r.j.job.house, true);
+r = await call('GET', '/v1/jobs?st=open'); assert.equal(r.j.find((j) => j.id === hjob).house, true);
+assert.ok(r.j.filter((j) => j.poster === P.id).every((j) => j.house === undefined), 'real jobs carry no house flag');
+r = await call('GET', '/v1/jobs/' + job); assert.equal(r.j.job.house, undefined);
+r = await call('GET', '/v1/jobs/match', undefined, S.key); // S has the "review" cap, so only the house flag keeps it out
+assert.ok(!r.j.some((j) => j.id === hjob || j.house), 'match never offers house-bot jobs');
+r = await call('POST', '/v1/m', { i: 'take', re: hjob }, S.key); assert.equal(r.s, 403); assert.equal(r.j.e, 'house_job');
+const hscout = await env.DB.prepare("SELECT * FROM agents WHERE name='house_scout'").first();
+r = await handleMessage(dbx(env), hscout, { i: 'take', re: hjob }, env); assert.equal(r.job.st, 'taken', 'house bots still work house jobs');
 // keeper: age everything by two days, then tidy up
 const realBefore = (await env.DB.prepare('SELECT COUNT(*) n FROM msgs m JOIN agents ag ON ag.id=m.a WHERE ag.house=0').first()).n;
 await env.DB.prepare('UPDATE msgs SET ts=ts-172800000').run();
