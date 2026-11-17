@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <!-- Hivetongue — Copyright (C) 2026 Haavik App Development · SPDX-License-Identifier: AGPL-3.0-or-later -->
-<html lang="en">
+<html lang="en" translate="no">
 <head>
 <meta charset="utf-8">
+<meta name="google" content="notranslate">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="48x48">
@@ -291,6 +292,7 @@ function pickAt(x, y) {
 // ================= render =================
 function wrap(text, maxW) { const words = text.split(/(?<=[ ,;:])/); const out = []; let cur = '';
   for (const w of words) { if (ctx.measureText(cur + w).width > maxW && cur) { out.push(cur); cur = w; } else cur += w; } if (cur) out.push(cur); return out.slice(0, 3); }
+const placed = [];
 function bubble(b, p, now) {
   const age = (now - b.bubble.born) / 1000; if (age > 8) return;
   ctx.save(); ctx.globalAlpha = Math.min(1, (8 - age) / 1.5);
@@ -298,7 +300,11 @@ function bubble(b, p, now) {
   const lines = wrap(raw(b.bubble.m), maxW).map((l) => ['11px ui-monospace, Menlo, monospace', '#5df2a6', l]);
   ctx.font = '12.5px system-ui'; wrap(b.name + ' ' + decode(b.bubble.m), maxW).forEach((l) => lines.push(['12.5px system-ui', '#f3efe2', l]));
   let w = 0; for (const [f, , l] of lines) { ctx.font = f; w = Math.max(w, ctx.measureText(l).width); }
-  const bw = w + pad * 2, bh = lines.length * 15 + pad * 2 - 2, bx = clamp(p.x - bw / 2, 6, W - bw - 6), by = p.y - 26 - bh;
+  const bw = w + pad * 2, bh = lines.length * 15 + pad * 2 - 2, bx = clamp(p.x - bw / 2, 6, W - bw - 6);
+  // stay clear of the top bar and never stack on another bubble
+  const by = Math.max(110, p.y - 26 - bh);
+  if (b !== selected && placed.some((r) => bx < r[0] + r[2] && bx + bw > r[0] && by < r[1] + r[3] && by + bh > r[1])) { ctx.restore(); return; }
+  placed.push([bx, by, bw, bh]);
   ctx.fillStyle = 'rgba(8,11,18,.92)'; ctx.strokeStyle = `hsla(${b.hue},90%,60%,.8)`; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 9); ctx.fill(); ctx.stroke();
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; lines.forEach(([f, c, l], i) => { ctx.font = f; ctx.fillStyle = c; ctx.fillText(l, bx + pad, by + pad + 11 + 15 * i); });
@@ -396,7 +402,11 @@ function frame(now) {
     }
   }
   // bubbles on top: the selected bee always, others only when close
-  for (const it of items) if (it.kind === 'bee' && it.b.bubble && (selected ? it.b === selected : it.p.s > 1.1)) bubble(it.b, it.p, now);
+  placed.length = 0;
+  // the selected bee speaks first, then at most two of the nearest others
+  const talkers = items.filter((it) => it.kind === 'bee' && it.b.bubble && (it.b === selected || (!selected && it.p.s > 1.1)))
+    .sort((a, b) => (b.b === selected) - (a.b === selected) || a.p.zz - b.p.zz).slice(0, 3);
+  for (const it of talkers) bubble(it.b, it.p, now);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

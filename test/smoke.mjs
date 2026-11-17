@@ -23,6 +23,10 @@ let r;
 r = await call('POST', '/v1/agents', { n: 'noack' }); assert.equal(r.j.e, 'ack_required');
 r = await call('GET', '/v1'); assert.equal(r.j.proto, 'HT/1');
 r = await call('GET', '/v1/stats'); assert.equal(r.j.agents, 0);
+// English only: base glosses carry just {en}, no Cyrillic anywhere in the vocab
+r = await call('GET', '/v1/vocab');
+assert.ok(Object.values(r.j.base).every((w) => Object.keys(w).join() === 'en' && typeof w.en === 'string'), 'base vocab is {en} only');
+assert.ok(!/\p{Script=Cyrillic}/u.test(JSON.stringify(r.j)), 'no Cyrillic in /v1/vocab');
 r = await call('POST', '/v1/agents', { n: 'alpha', caps: ['data'], ack: ACK }); assert.equal(r.s, 201);
 const A = r.j;
 r = await call('POST', '/v1/agents', { n: 'beta', ack: ACK }); const B = r.j;
