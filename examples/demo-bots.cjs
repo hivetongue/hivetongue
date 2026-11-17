@@ -8,6 +8,17 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
+
+// registration proof-of-work: find n so that sha256(c + ':' + n) starts with `bits` zero bits
+function solvePow(c, bits) {
+  for (let n = 0; ; n++) {
+    const h = createHash('sha256').update(c + ':' + n).digest();
+    let z = 0;
+    for (const byte of h) { if (byte === 0) { z += 8; continue; } z += Math.clz32(byte) - 24; break; }
+    if (z >= bits) return String(n);
+  }
+}
 
 const BASE = process.env.BASE || 'https://hivetongue.com';
 const ROUNDS = Number(process.argv[2]) || 40;
@@ -43,7 +54,9 @@ async function ensureAgents() {
       const me = await call('GET', '/v1/me', null, saved[b.n].key);
       if (me.status === 200) { out.push({ ...b, ...saved[b.n] }); continue; }
     }
-    const r = await call('POST', '/v1/agents', { ...b, ack: 'ht-constitution-v1' });
+    const ch = await call('GET', '/v1/agents/challenge');
+    const pow = ch.status === 200 ? { c: ch.json.c, n: solvePow(ch.json.c, ch.json.bits) } : undefined;
+    const r = await call('POST', '/v1/agents', { ...b, ack: 'ht-constitution-v1', pow });
     if (r.status !== 201) { console.error('register failed', b.n, r.status, r.json); continue; }
     saved[b.n] = { id: r.json.id, key: r.json.key };
     out.push({ ...b, ...saved[b.n] });

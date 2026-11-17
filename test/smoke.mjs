@@ -6,7 +6,7 @@ import { createD1 } from './d1-shim.mjs';
 import worker, { handleMessage, dbx } from '../src/worker.js';
 import { runHouse, HOUSE_BOTS } from '../src/house.js';
 
-const env = { DB: createD1(...['0001_init.sql', '0002_safety.sql', '0003_fields.sql', '0004_jobs_presence.sql'].map((f) => new URL('../migrations/' + f, import.meta.url).pathname)), ADMIN_TOKEN: 'admin-secret', REG_PER_HOUR: '100', FIELD_MIN_KARMA: '0', FIELD_MIN_AGE_H: '0' };
+const env = { DB: createD1(...['0001_init.sql', '0002_safety.sql', '0003_fields.sql', '0004_jobs_presence.sql', '0005_defense.sql'].map((f) => new URL('../migrations/' + f, import.meta.url).pathname)), ADMIN_TOKEN: 'admin-secret', REG_PER_HOUR: '100', FIELD_MIN_KARMA: '0', FIELD_MIN_AGE_H: '0', POW_BITS: '0', PROBATION_H: '0', REG_GLOBAL_PER_HOUR: '100000' };
 const ctx = { waitUntil() {} };
 async function call(method, p, body, key, extra = {}) {
   const req = new Request('http://local' + p, {
@@ -229,7 +229,64 @@ assert.equal((await env.DB.prepare("SELECT COUNT(*) n FROM agents WHERE house=1 
 r = await call('GET', '/v1/map'); assert.ok(r.j.agents.filter((a) => a.house).every((a) => a.s === 'seeking' || a.s === 'busy'));
 r = await call('POST', '/v1/admin/house', undefined, undefined, { 'x-admin-token': 'admin-secret' }); assert.equal(r.j.bots, HOUSE_BOTS.length);
 r = await call('POST', '/v1/admin/house'); assert.equal(r.s, 403);
+// keeper: age everything by two days, then tidy up
+const realBefore = (await env.DB.prepare('SELECT COUNT(*) n FROM msgs m JOIN agents ag ON ag.id=m.a WHERE ag.house=0').first()).n;
+await env.DB.prepare('UPDATE msgs SET ts=ts-172800000').run();
+await env.DB.prepare('UPDATE deals SET updated=updated-172800000').run();
+await env.DB.prepare('UPDATE jobs SET updated=updated-172800000').run();
+r = await call('POST', '/v1/admin/keeper', undefined, undefined, { 'x-admin-token': 'admin-secret' });
+console.log('keeper', JSON.stringify(r.j)); assert.ok(r.j.house_msgs > 50);
+assert.equal((await env.DB.prepare('SELECT COUNT(*) n FROM msgs m JOIN agents ag ON ag.id=m.a WHERE ag.house=1').first()).n, 0);
+assert.equal((await env.DB.prepare('SELECT COUNT(*) n FROM msgs m JOIN agents ag ON ag.id=m.a WHERE ag.house=0').first()).n, realBefore, 'real agents are never deleted');
+r = await call('POST', '/v1/admin/keeper'); assert.equal(r.s, 403);
 env.HOUSE = '0'; assert.equal((await runHouse(env, { dbx, handleMessage })).off, true); delete env.HOUSE;
+
+// flood defense: proof-of-work registration
+const { createHash } = await import('node:crypto');
+const solve = (c, bits) => { for (let n = 0; ; n++) { const h = createHash('sha256').update(c + ':' + n).digest('hex');
+  let z = 0; for (const ch of h) { const v = parseInt(ch, 16); if (v === 0) { z += 4; continue; } z += Math.clz32(v) - 28; break; } if (z >= bits) return String(n); } };
+env.POW_BITS = '10';
+r = await call('POST', '/v1/agents', { n: 'nopow', ack: ACK }); assert.equal(r.j.e, 'pow_required');
+r = await call('GET', '/v1/agents/challenge'); const ch = r.j; assert.equal(ch.bits, 10);
+r = await call('POST', '/v1/agents', { n: 'badpow', ack: ACK, pow: { c: ch.c, n: 'x' } }); assert.equal(r.j.e, 'pow_bad');
+r = await call('POST', '/v1/agents', { n: 'fakepow', ack: ACK, pow: { c: ch.c.replace(/\.[0-9a-f]+$/, '.00'), n: '1' } }); assert.equal(r.j.e, 'pow_bad');
+const sol = solve(ch.c, ch.bits);
+r = await call('POST', '/v1/agents', { n: 'powok', ack: ACK, pow: { c: ch.c, n: sol } }); assert.equal(r.s, 201); const PW = r.j;
+r = await call('POST', '/v1/agents', { n: 'powreuse', ack: ACK, pow: { c: ch.c, n: sol } }); assert.equal(r.j.e, 'pow_used');
+env.POW_BITS = '0';
+
+// probation: new agents are slower and cannot post jobs, offers or words
+env.PROBATION_H = '24';
+r = await call('POST', '/v1/m', { i: 'job', d: { need: 'csv_clean' } }, PW.key); assert.equal(r.j.e, 'probation');
+r = await call('POST', '/v1/m', { i: 'p', t: 'gen', d: { hi: 'hive' } }, PW.key); assert.equal(r.s, 201);
+env.PROBATION_H = '0';
+
+// circuit breaker pauses registration on a wave, admin reopens it
+env.REG_GLOBAL_PER_HOUR = '3';
+r = await call('POST', '/v1/agents', { n: 'wave1', ack: ACK }); assert.equal(r.j.e, 'registration_paused');
+r = await call('GET', '/v1/admin/mode', undefined, undefined, { 'x-admin-token': 'admin-secret' }); assert.equal(r.j.reg, 'closed');
+env.REG_GLOBAL_PER_HOUR = '100000';
+r = await call('POST', '/v1/agents', { n: 'wave2', ack: ACK }); assert.equal(r.j.e, 'registration_paused');
+r = await call('POST', '/v1/admin/mode', { reg: 'open' }, undefined, { 'x-admin-token': 'admin-secret' }); assert.equal(r.j.reg, 'open');
+const t0 = Date.now();
+const flood = [];
+for (let k = 0; k < 6; k++) { r = await call('POST', '/v1/agents', { n: 'flood' + k, ack: ACK }, undefined, { 'cf-connecting-ip': '203.0.113.9' }); assert.equal(r.s, 201); flood.push(r.j); }
+r = await call('POST', '/v1/m', { i: 'p', t: 'gen', d: { spam: 1 } }, flood[0].key); assert.equal(r.s, 201);
+r = await call('POST', '/v1/m', { i: 'o', d: { item: 'junk', price: 1, cur: 'cred' } }, flood[1].key); assert.equal(r.s, 201);
+r = await call('GET', '/v1/admin/recent?since=' + t0, undefined, undefined, { 'x-admin-token': 'admin-secret' });
+assert.equal(r.j.total, 6); const src = r.j.sources[0]; assert.equal(src.n, 6);
+
+// read-only mode during an attack
+r = await call('POST', '/v1/admin/mode', { readonly: 1 }, undefined, { 'x-admin-token': 'admin-secret' });
+r = await call('POST', '/v1/m', { i: 'p', t: 'gen', d: { x: 1 } }, A.key); assert.equal(r.j.e, 'read_only');
+r = await call('GET', '/v1/m?limit=1'); assert.equal(r.s, 200);
+r = await call('POST', '/v1/admin/mode', { readonly: 0 }, undefined, { 'x-admin-token': 'admin-secret' });
+
+// mass cleanup by time and source
+r = await call('POST', '/v1/admin/ban_since', { since: t0, ip_h: src.ip_h, dry: true }, undefined, { 'x-admin-token': 'admin-secret' }); assert.equal(r.j.would_ban, 6);
+r = await call('POST', '/v1/admin/ban_since', { since: t0, ip_h: src.ip_h }, undefined, { 'x-admin-token': 'admin-secret' }); assert.equal(r.j.banned, 6);
+r = await call('POST', '/v1/m', { i: 'p', t: 'gen', d: { x: 1 } }, flood[2].key); assert.equal(r.j.e, 'banned');
+r = await call('GET', '/v1/agents/' + PW.id); assert.equal(r.s, 200, 'other agents untouched');
 
 // concurrency guard: stale deal update must be rejected, not double-applied
 r = await call('POST', '/v1/agents', { n: 'delta', ack: ACK }); const D = r.j;

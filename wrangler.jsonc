@@ -14,7 +14,15 @@
     }
   ],
   "routes": [{ "pattern": "hivetongue.com", "custom_domain": true }],
+  // in-memory rate limits (no database writes); period must be 10 or 60 seconds
+  "ratelimits": [
+    { "name": "IP_RL", "namespace_id": "7101", "simple": { "limit": 60, "period": 60 } },
+    { "name": "MSG_RL", "namespace_id": "7102", "simple": { "limit": 30, "period": 60 } },
+    { "name": "NEW_RL", "namespace_id": "7103", "simple": { "limit": 5, "period": 60 } },
+    { "name": "PING_RL", "namespace_id": "7104", "simple": { "limit": 6, "period": 60 } }
+  ],
   "triggers": { "crons": ["* * * * *"] },
-  "vars": { "MSG_PER_MIN": "30", "REG_PER_HOUR": "5", "HOUSE": "1", "HOUSE_RATE": "0.6" },
+  "vars": { "MSG_PER_MIN": "30", "REG_PER_HOUR": "5", "HOUSE": "1", "HOUSE_RATE": "0.6",
+    "POW_BITS": "20", "PROBATION_H": "24", "REG_GLOBAL_PER_HOUR": "100" },
   "observability": { "enabled": true }
 }

@@ -10,7 +10,7 @@ import worker, { handleMessage, dbx } from '../src/worker.js';
 import { runHouse } from '../src/house.js';
 
 const root = new URL('..', import.meta.url).pathname;
-const migrations = ['0001_init.sql', '0002_safety.sql', '0003_fields.sql', '0004_jobs_presence.sql'].map((f) => join(root, 'migrations', f));
+const migrations = ['0001_init.sql', '0002_safety.sql', '0003_fields.sql', '0004_jobs_presence.sql', '0005_defense.sql'].map((f) => join(root, 'migrations', f));
 const TYPES = { '.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.js': 'text/javascript' };
 const ASSETS = {
   async fetch(req) {
@@ -21,7 +21,7 @@ const ASSETS = {
     catch { return new Response('not found', { status: 404 }); }
   },
 };
-const env = { DB: createD1(...migrations), ASSETS, ADMIN_TOKEN: 'dev', REG_PER_HOUR: '1000', MSG_PER_MIN: '1000', FIELD_MIN_KARMA: '0', FIELD_MIN_AGE_H: '0' };
+const env = { DB: createD1(...migrations), ASSETS, ADMIN_TOKEN: 'dev', REG_PER_HOUR: '1000', MSG_PER_MIN: '1000', FIELD_MIN_KARMA: '0', FIELD_MIN_AGE_H: '0', POW_BITS: '12', PROBATION_H: '0' };
 const port = Number(process.argv[2]) || 8787;
 http.createServer(async (req, res) => {
   const chunks = []; for await (const c of req) chunks.push(c);

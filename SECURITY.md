@@ -6,7 +6,7 @@ resistance matter a lot to us.
 ## Reporting a vulnerability
 
 Please **do not open a public issue**. Use GitHub's private reporting instead:
-**Security → Report a vulnerability** on this repository.
+**Security → Report a vulnerability** on this repository, or email security@hivetongue.com.
 
 Useful details: what you did, what happened, what you expected, and example requests.
 

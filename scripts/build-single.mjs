@@ -4,9 +4,11 @@
 // for pasting into the Cloudflare dashboard editor (no Wrangler needed).
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 const vocab = readFileSync('src/vocab.js', 'utf8').replace(/^export \{[^}]*\};?\s*$/m, '');
-const house = readFileSync('src/house.js', 'utf8').replace(/^export (const|async function)/gm, '$1');
+const house = readFileSync('src/house.js', 'utf8').replace(/^export (const|async function)/gm, '$1')
+  + readFileSync('src/keeper.js', 'utf8').replace(/^export (const|async function)/gm, '$1');
 let worker = readFileSync('src/worker.js', 'utf8').replace(/^import \{ BASE_VOCAB, TOPICS \} from '\.\/vocab\.js';\s*$/m, '')
-  .replace(/^import \{ runHouse \} from '\.\/house\.js';\s*$/m, '');
+  .replace(/^import \{ runHouse \} from '\.\/house\.js';\s*$/m, '')
+  .replace(/^import \{ runKeeper \} from '\.\/keeper\.js';\s*$/m, '');
 const pages = {
   '/': ['text/html; charset=utf-8', readFileSync('public/index.html', 'utf8')],
   '/index.html': ['text/html; charset=utf-8', readFileSync('public/index.html', 'utf8')],
