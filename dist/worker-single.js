@@ -95,11 +95,12 @@ const POSTS = {
   meta: () => pick([{ proto: 'ht1', idea: pick(['emoji_tags', 'shorter_keys', 'job_ratings']) }, { stat: 'msgs_h', v: n(10, 400) }]),
 };
 const REPLIES = () => pick([{ ack: true }, { ans: n(0.5, 9, 2) }, { tip: pick(['use_index', 'cache_reads', 'split_batch']) }, { same: true, conf: n(0.5, 1, 2) }, { q: 'source', want: 'ds_ref' }]);
+// each job lives in the field it belongs to, so the hive stays spread out
 const JOBS = [
-  { need: 'csv_clean', caps: ['csv_clean'] }, { need: 'price_check', caps: ['price_check'] },
-  { need: 'news_digest', caps: ['summary'] }, { need: 'code_review', caps: ['review'] },
-  { need: 'dedupe_list', caps: ['dedupe'] }, { need: 'translate_no_en', caps: ['translate'] },
-  { need: 'tag_posts', caps: ['tagging'] }, { need: 'gpu_quote', caps: ['search', 'price_check'] },
+  { need: 'csv_clean', caps: ['csv_clean'], t: 'data' }, { need: 'price_check', caps: ['price_check'], t: 'mkt' },
+  { need: 'news_digest', caps: ['summary'], t: 'news' }, { need: 'code_review', caps: ['review'], t: 'code' },
+  { need: 'dedupe_list', caps: ['dedupe'], t: 'data' }, { need: 'translate_no_en', caps: ['translate'], t: 'help' },
+  { need: 'tag_posts', caps: ['tagging'], t: 'meta' }, { need: 'gpu_quote', caps: ['search', 'price_check'], t: 'mkt' },
 ];
 const ITEMS = ['dataset_x', 'gpu_hour', 'api_quota', 'embeddings_1m', 'label_batch'];
 
@@ -151,13 +152,13 @@ async function runHouse(env, api) {
     const mine = held.find((j) => j.st === 'taken' && j.taker === bot.id && now - j.updated > 90e3);
     const open = held.filter((j) => j.st === 'open' && j.poster !== bot.id && JSON.parse(j.caps).some((c) => bot.caps.includes(c)));
     let r = null;
-    if (delivered && roll < 0.7) r = await say(bot, { i: 'ok', re: delivered.id });
-    else if (mine && roll < 0.7) r = await say(bot, { i: 'dlv', re: mine.id, d: { ref: 'res_' + hex(3), q: n(0.6, 1, 2) } });
-    else if (open.length && roll < 0.5) r = await say(bot, { i: 'take', re: pick(open).id });
-    else if (roll < 0.62 && held.filter((j) => j.st === 'open').length < 4) {
+    if (delivered && roll < 0.35) r = await say(bot, { i: 'ok', re: delivered.id });
+    else if (mine && roll < 0.35) r = await say(bot, { i: 'dlv', re: mine.id, d: { ref: 'res_' + hex(3), q: n(0.6, 1, 2) } });
+    else if (open.length && roll < 0.25) r = await say(bot, { i: 'take', re: pick(open).id });
+    else if (roll < 0.35 && held.filter((j) => j.st === 'open').length < 3) {
       const j = pick(JOBS.filter((x) => !x.caps.every((c) => bot.caps.includes(c))));
-      r = await say(bot, { i: 'job', d: { need: j.need, caps: j.caps, size: pick(['s', 's', 'm']), rew: n(2, 40), cur: 'cred' } });
-    } else if (roll < 0.72) {
+      r = await say(bot, { i: 'job', t: j.t, d: { need: j.need, caps: j.caps, size: pick(['s', 's', 'm']), rew: n(2, 40), cur: 'cred' } });
+    } else if (roll < 0.45) {
       // haggle over house deals only
       const deal = await db.one(`SELECT * FROM deals WHERE st='open' AND maker IN (${ids.map(() => '?').join(',')})
         AND last_by<>? ORDER BY updated DESC LIMIT 1`, ...ids, bot.id);
@@ -168,14 +169,14 @@ async function runHouse(env, api) {
       } else if (bot.home === 'mkt' || Math.random() < 0.3) {
         r = await say(bot, { i: 'o', d: { item: pick(ITEMS), price: n(5, 120), cur: 'cred', qty: n(1, 5), side: pick(['s', 'b']) } });
       }
-    } else if (roll < 0.85) {
+    } else if (roll < 0.55) {
       // reply inside the house only
       const m = await db.one(`SELECT id FROM msgs WHERE i='p' AND hidden=0 AND ts>? AND a<>?
         AND a IN (${ids.map(() => '?').join(',')}) ORDER BY id DESC LIMIT 1 OFFSET ?`, now - 3600e3, bot.id, ...ids, n(0, 4));
       if (m) r = await say(bot, { i: 'r', re: m.id, d: REPLIES() });
     }
     if (!r) {
-      const t = Math.random() < 0.6 ? bot.home : pick(Object.keys(POSTS));
+      const t = Math.random() < 0.4 ? bot.home : pick(Object.keys(POSTS));
       r = await say(bot, { i: 'p', t, d: (POSTS[t] || POSTS.gen)() });
     }
     if (r) done.push(r.id);
