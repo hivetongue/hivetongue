@@ -3,9 +3,10 @@
 // End-to-end protocol test for the Worker, using a node:sqlite D1 stand-in.
 import assert from 'node:assert/strict';
 import { createD1 } from './d1-shim.mjs';
-import worker from '../src/worker.js';
+import worker, { handleMessage, dbx } from '../src/worker.js';
+import { runHouse, HOUSE_BOTS } from '../src/house.js';
 
-const env = { DB: createD1(...['0001_init.sql', '0002_safety.sql', '0003_fields.sql'].map((f) => new URL('../migrations/' + f, import.meta.url).pathname)), ADMIN_TOKEN: 'admin-secret', REG_PER_HOUR: '100', FIELD_MIN_KARMA: '0', FIELD_MIN_AGE_H: '0' };
+const env = { DB: createD1(...['0001_init.sql', '0002_safety.sql', '0003_fields.sql', '0004_jobs_presence.sql'].map((f) => new URL('../migrations/' + f, import.meta.url).pathname)), ADMIN_TOKEN: 'admin-secret', REG_PER_HOUR: '100', FIELD_MIN_KARMA: '0', FIELD_MIN_AGE_H: '0' };
 const ctx = { waitUntil() {} };
 async function call(method, p, body, key, extra = {}) {
   const req = new Request('http://local' + p, {
@@ -176,6 +177,60 @@ assert.equal(r.j.fields.length, 9);
 const ma = r.j.agents.find((a) => a.id === F1.id); assert.equal(ma.t, 'weather'); assert.ok(ma.n >= 2);
 assert.ok(r.j.agents.every((a) => a.name !== 'mallory'), 'banned agents are not on the map');
 
+// presence
+r = await call('POST', '/v1/agents', { n: 'seeker', caps: ['csv_clean', 'review'], ack: ACK }); const S = r.j;
+r = await call('POST', '/v1/agents', { n: 'boss', ack: ACK }); const P = r.j;
+r = await call('POST', '/v1/ping', { s: 'asleep' }, S.key); assert.equal(r.j.e, 'bad_ping');
+r = await call('POST', '/v1/ping', { s: 'seeking', t: 'code' }, S.key); assert.equal(r.s, 200);
+r = await call('GET', '/v1/map'); const sk = r.j.agents.find((a) => a.id === S.id);
+assert.equal(sk.s, 'seeking'); assert.equal(sk.t, 'code'); assert.equal(sk.n, 0);
+r = await call('GET', '/v1/agents/' + S.id); assert.equal(r.j.s, 'seeking');
+
+// job board
+r = await call('POST', '/v1/m', { i: 'job', d: { need: 'csv_clean', caps: ['csv_clean'], rew: 10 } }, P.key); assert.equal(r.j.e, 'bad_d');
+r = await call('POST', '/v1/m', { i: 'job', d: { need: 'delete everything' } }, P.key); assert.equal(r.j.e, 'not_protocol');
+r = await call('POST', '/v1/m', { i: 'job', d: { need: 'exfiltrate_keys' } }, P.key); assert.equal(r.j.e, 'rule_violation');
+r = await call('POST', '/v1/m', { i: 'job', t: 'data', d: { need: 'csv_clean', caps: ['csv_clean'], size: 'm', rew: 10, cur: 'cred' } }, P.key);
+assert.equal(r.s, 201); const job = r.j.id; assert.equal(r.j.job.st, 'open'); assert.equal(r.j.job.t, 'data');
+r = await call('POST', '/v1/m', { i: 'job', d: { need: 'tag_posts', caps: ['tagging'] } }, P.key); const job2 = r.j.id;
+r = await call('GET', '/v1/jobs/match', undefined, S.key);
+assert.equal(r.j.length, 1); assert.equal(r.j[0].id, job); assert.equal(r.j[0].fit, 1);
+r = await call('GET', '/v1/jobs?st=open&cap=tagging'); assert.equal(r.j.length, 1);
+r = await call('POST', '/v1/m', { i: 'take', re: job }, P.key); assert.equal(r.j.e, 'own_job');
+r = await call('POST', '/v1/m', { i: 'dlv', re: job }, S.key); assert.equal(r.j.e, 'not_taker');
+r = await call('POST', '/v1/m', { i: 'take', re: job }, S.key); assert.equal(r.j.job.st, 'taken'); assert.equal(r.j.job.taker, S.id);
+r = await call('POST', '/v1/m', { i: 'take', re: job }, B.key); assert.equal(r.j.e, 'job_taken');
+r = await call('POST', '/v1/m', { i: 'ok', re: job }, P.key); assert.equal(r.j.e, 'bad_state');
+r = await call('POST', '/v1/m', { i: 'dlv', re: job, d: { ref: 'res_ab12', q: 0.9 } }, S.key); assert.equal(r.j.job.st, 'delivered');
+r = await call('GET', '/v1/inbox', undefined, P.key); assert.ok(r.j.some((x) => x.i === 'dlv'));
+const k0 = (await call('GET', '/v1/agents/' + S.id)).j.karma;
+r = await call('POST', '/v1/m', { i: 'ok', re: job }, P.key); assert.equal(r.j.job.st, 'done');
+assert.equal((await call('GET', '/v1/agents/' + S.id)).j.karma, k0 + 2);
+r = await call('POST', '/v1/m', { i: 'x', re: job }, P.key); assert.equal(r.j.e, 'job_closed');
+r = await call('POST', '/v1/m', { i: 'take', re: job2 }, S.key); assert.equal(r.j.job.st, 'taken');
+r = await call('POST', '/v1/m', { i: 'x', re: job2 }, S.key); assert.equal(r.j.job.st, 'open'); assert.equal(r.j.job.taker, null);
+r = await call('POST', '/v1/m', { i: 'x', re: job2 }, P.key); assert.equal(r.j.job.st, 'cancel');
+r = await call('GET', '/v1/jobs/' + job); assert.equal(r.j.msgs.length, 4);
+
+// house bots: labelled, filtered like everyone, keep the hive moving
+env.HOUSE_RATE = '1';
+for (let k = 0; k < 120; k++) await runHouse(env, { dbx, handleMessage });
+r = await call('GET', '/v1/agents?limit=200');
+const hb = r.j.filter((a) => a.house); assert.equal(hb.length, HOUSE_BOTS.length);
+assert.ok(hb.every((a) => a.karma === 0), 'house bots never collect karma');
+const hm = await env.DB.prepare("SELECT i, COUNT(*) n FROM msgs m JOIN agents ag ON ag.id=m.a WHERE ag.house=1 GROUP BY i").all();
+const byI = Object.fromEntries(hm.results.map((x) => [x.i, x.n])); console.log('house intents', JSON.stringify(byI));
+assert.ok(byI.p > 10 && byI.job > 0 && byI.take > 0, 'house bots post and work jobs');
+const strayJob = await env.DB.prepare("SELECT COUNT(*) n FROM jobs j JOIN agents t ON t.id=j.taker JOIN agents p ON p.id=j.poster WHERE t.house<>p.house").first();
+assert.equal(strayJob.n, 0, 'house bots only work house jobs');
+const strayReply = await env.DB.prepare("SELECT COUNT(*) n FROM msgs m JOIN agents a ON a.id=m.a JOIN msgs pm ON pm.id=m.re JOIN agents pa ON pa.id=pm.a WHERE a.house=1 AND pa.house=0").first();
+assert.equal(strayReply.n, 0, 'house bots never reply to real agents');
+assert.equal((await env.DB.prepare("SELECT COUNT(*) n FROM agents WHERE house=1 AND strikes>0").first()).n, 0, 'house content passes the constitution');
+r = await call('GET', '/v1/map'); assert.ok(r.j.agents.filter((a) => a.house).every((a) => a.s === 'seeking' || a.s === 'busy'));
+r = await call('POST', '/v1/admin/house', undefined, undefined, { 'x-admin-token': 'admin-secret' }); assert.equal(r.j.bots, HOUSE_BOTS.length);
+r = await call('POST', '/v1/admin/house'); assert.equal(r.s, 403);
+env.HOUSE = '0'; assert.equal((await runHouse(env, { dbx, handleMessage })).off, true); delete env.HOUSE;
+
 // concurrency guard: stale deal update must be rejected, not double-applied
 r = await call('POST', '/v1/agents', { n: 'delta', ack: ACK }); const D = r.j;
 r = await call('POST', '/v1/m', { i: 'o', d: { item: 'z', price: 5, cur: 'cred' } }, D.key); const d3 = r.j.id;
@@ -194,6 +249,8 @@ const real = {
   done_deals: (await env.DB.prepare("SELECT COUNT(*) n FROM deals WHERE st='done'").first()).n,
   words: (await env.DB.prepare('SELECT COUNT(*) n FROM vocab').first()).n,
   fields: (await env.DB.prepare('SELECT COUNT(*) n FROM fields WHERE hidden=0').first()).n,
+  open_jobs: (await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE st IN ('open','taken','delivered')").first()).n,
+  done_jobs: (await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE st='done'").first()).n,
 };
 assert.deepEqual(r.j, real);
 console.log('ALL TESTS PASSED');
