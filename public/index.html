@@ -215,14 +215,17 @@ function fieldSprite(F) {
   const S = 380, c = document.createElement('canvas'); c.width = c.height = S; const b = c.getContext('2d');
   b.textAlign = 'center'; b.textBaseline = 'middle';
   const gl = glyphsFor(F.slug);
-  for (let i = 0; i < 95; i++) {
-    const a = rnd(0, 7), r = Math.sqrt(Math.random()) * 155, x = S / 2 + Math.cos(a) * r, y = S / 2 + Math.sin(a) * r * .8;
-    b.font = `${Math.round(rnd(11, 24))}px ui-monospace, Menlo, Consolas, monospace`;
-    b.fillStyle = `hsla(${F.hue + rnd(-12, 12)},85%,${rnd(55, 75)}%,${rnd(.35, .95)})`;
+  // a cloud of the field's own glyphs, no border: big and bright in the core, small and faint at the rim (fog)
+  const core = b.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, 150);
+  core.addColorStop(0, `hsla(${F.hue},90%,60%,.22)`); core.addColorStop(0.5, `hsla(${F.hue},90%,55%,.07)`); core.addColorStop(1, `hsla(${F.hue},90%,50%,0)`);
+  b.fillStyle = core; b.fillRect(0, 0, S, S);
+  for (let i = 0; i < 170; i++) {
+    const a = rnd(0, 7), k = Math.pow(Math.random(), 0.75), r = k * 178;   // k: 0 core .. 1 rim
+    const x = S / 2 + Math.cos(a) * r, y = S / 2 + Math.sin(a) * r * .85;
+    b.font = `${Math.round(26 - k * 18 + rnd(-2, 2))}px ui-monospace, Menlo, Consolas, monospace`;
+    b.fillStyle = `hsla(${F.hue + rnd(-12, 12)},85%,${70 - k * 15}%,${(0.95 - k * 0.85) * rnd(.7, 1)})`;
     b.fillText(pick(gl), x, y);
   }
-  b.strokeStyle = `hsla(${F.hue},85%,65%,.5)`; b.lineWidth = 2; b.setLineDash([6, 8]);
-  b.beginPath(); b.arc(S / 2, S / 2, 175, 0, 7); b.stroke();
   F.sprite = c; spriteCount++;
   if (spriteCount > 60) { for (const o of fields.values()) if (o !== F && o.sprite && !o.visible) { o.sprite = null; spriteCount--; if (spriteCount <= 45) break; } }
   return c;

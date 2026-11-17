@@ -84,12 +84,12 @@ for (let i = 0; i < 3600; i++) {
 
 // ================= camera =================
 const cam = { yaw: 0.7, pitch: 0.75, dist: 1700, tx: 0, ty: 0, tz: 0, goalDist: 1700, auto: true, pauseUntil: 0 };
+let CY = 1, SY = 0, CP = 1, SP = 0;
+const camTrig = () => { CY = Math.cos(cam.yaw); SY = Math.sin(cam.yaw); CP = Math.cos(cam.pitch); SP = Math.sin(cam.pitch); };
 function proj(p) {
   const x = p.x - cam.tx, y = p.y - cam.ty, z = p.z - cam.tz;
-  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
-  const x1 = x * cy - z * sy, z1 = x * sy + z * cy;
-  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
-  const y1 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+  const x1 = x * CY - z * SY, z1 = x * SY + z * CY;
+  const y1 = y * CP - z1 * SP, z2 = y * SP + z1 * CP;
   const zz = z2 + cam.dist; if (zz < 25) return null;
   const s = F / zz; return { x: W / 2 + x1 * s, y: H / 2 - y1 * s, s, zz };
 }
@@ -98,9 +98,32 @@ function proj(p) {
 const fields = new Map(), bees = new Map(), MSGS = new Map(), deals = new Map(), jobs = new Map();
 const links = [], pulses = [];
 let selected = null;
+// each field is a dandelion: a sphere of its own glyphs, big and bright in the core, small and faint at the rim
+const GLYPHS = { data: '0101', code: '{}<>/;=', mkt: '$€¥£₿', help: '?¿!?', news: '#»«!', meta: '∞≡◇·', gen: 'o○●◦', weather: '☁☂❄~', gpu: '▣▤▥■' };
+const SR = 120; // sphere radius in world units
+const spriteCache = new Map();
+function glyphSprite(ch, hue) {
+  const key = ch + hue; let c = spriteCache.get(key); if (c) return c;
+  c = document.createElement('canvas'); c.width = c.height = 48; const g = c.getContext('2d');
+  g.font = '700 34px ui-monospace, Menlo, monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.shadowColor = `hsl(${hue},95%,60%)`; g.shadowBlur = 8; g.fillStyle = `hsl(${hue},95%,78%)`; g.fillText(ch, 24, 25);
+  spriteCache.set(key, c); return c;
+}
+function makeSeeds(slug, hue) {
+  const set = [...(GLYPHS[slug] || slug.replace(/[^a-z0-9]/g, '') || '*')], seeds = [];
+  for (let i = 0; i < 130; i++) {
+    const u = rnd(-1, 1), th = rnd(0, Math.PI * 2), q = Math.sqrt(1 - u * u);
+    const shell = i < 46; // the outer seeds of the dandelion, each on a thin stalk
+    const r = shell ? SR * rnd(0.82, 1) : SR * Math.pow(Math.random(), 1.7) * 0.85;
+    const k = r / SR;
+    seeds.push({ dx: q * Math.cos(th) * r, dy: u * r, dz: q * Math.sin(th) * r, k, shell,
+      size: 30 * (1 - k * 0.72), a: 1 - k * 0.8, img: glyphSprite(pick(set), hue) });
+  }
+  return seeds;
+}
 function upsertField(f) {
   let F_ = fields.get(f.slug);
-  if (!F_) { F_ = { slug: f.slug, hue: f.hue ?? hashHue(f.slug), ...slotPos(f.slot ?? fields.size), heat: 0 }; fields.set(f.slug, F_); }
+  if (!F_) { F_ = { slug: f.slug, hue: f.hue ?? hashHue(f.slug), ...slotPos(f.slot ?? fields.size), heat: 0, spin: rnd(0, 6) }; F_.seeds = makeSeeds(f.slug, F_.hue); fields.set(f.slug, F_); }
   F_.heat = f.heat ?? F_.heat; return F_;
 }
 function ensureBee(id, name) {
@@ -112,7 +135,7 @@ function ensureBee(id, name) {
   if (name) b.name = name; return b;
 }
 function goTo(b, p, spread) { b.gx = p.x + rnd(-spread, spread); b.gy = p.y + rnd(-spread, spread) * 0.6; b.gz = p.z + rnd(-spread, spread); }
-function wander(b) { const f = b.field && fields.get(b.field); if (f && Math.random() < 0.8) goTo(b, f, 110); else goTo(b, { x: 0, y: 0, z: 0 }, 180); }
+function wander(b) { const f = b.field && fields.get(b.field); if (f && Math.random() < 0.8) goTo(b, f, 95); else goTo(b, { x: 0, y: 0, z: 0 }, 180); }
 const active = (b) => b === selected || b.s === 'seeking' || b.s === 'busy' || Date.now() - b.last < 15 * 60e3;
 
 // ================= decoder =================
@@ -289,6 +312,7 @@ function frame(now) {
   cam.tx += (tgt.x - cam.tx) * k; cam.ty += (tgt.y - cam.ty) * k; cam.tz += (tgt.z - cam.tz) * k;
   cam.dist += (cam.goalDist - cam.dist) * k * 0.8;
   if (cam.auto && now > cam.pauseUntil) cam.yaw += dt * (selected ? 0.00028 : 0.00009);
+  camTrig();
   // bees fly
   for (const b of bees.values()) {
     if (!active(b)) continue;
@@ -327,15 +351,34 @@ function frame(now) {
       ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, 7); ctx.fill();
       if (p.s > 0.22) { ctx.font = `600 ${clamp(13 * p.s * 2, 10, 22)}px ui-monospace, Menlo, monospace`; ctx.fillStyle = 'rgba(255,230,170,.9)'; ctx.fillText('Hive · core', p.x, p.y + R * 0.55); }
     } else if (it.kind === 'field') {
-      const f = it.f, R = 95 * p.s * (1 + Math.min(5, f.heat) * 0.1);
-      const gg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, R);
-      gg.addColorStop(0, `hsla(${f.hue},90%,70%,.9)`); gg.addColorStop(0.25, `hsla(${f.hue},90%,55%,.35)`); gg.addColorStop(1, `hsla(${f.hue},90%,50%,0)`);
-      ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, 7); ctx.fill();
+      const f = it.f, breathe = 1 + Math.min(5, f.heat) * 0.05 + Math.sin(now * 0.0012 + f.spin) * 0.02, R = SR * p.s * breathe;
+      const gg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, R * 0.9);
+      gg.addColorStop(0, `hsla(${f.hue},90%,70%,.55)`); gg.addColorStop(0.35, `hsla(${f.hue},90%,55%,.15)`); gg.addColorStop(1, `hsla(${f.hue},90%,50%,0)`);
+      ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(p.x, p.y, R * 0.9, 0, 7); ctx.fill();
+      if (R > 22) {
+        // the sphere turns slowly on its own axis and keeps its 3D shape while the camera orbits
+        const ang = now * 0.00015 + f.spin, ca = Math.cos(ang), sa = Math.sin(ang);
+        const pts = [];
+        for (const sd of f.seeds) {
+          const q = proj({ x: f.x + (sd.dx * ca - sd.dz * sa) * breathe, y: f.y + sd.dy * breathe, z: f.z + (sd.dx * sa + sd.dz * ca) * breathe });
+          if (q) pts.push([sd, q]);
+        }
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        // stalks from the core to the outer seeds
+        ctx.strokeStyle = `hsla(${f.hue},80%,70%,.10)`; ctx.lineWidth = 0.7; ctx.beginPath();
+        for (const [sd, q] of pts) if (sd.shell) { ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); }
+        ctx.stroke();
+        for (const [sd, q] of pts) {
+          const sz = clamp(sd.size * q.s, 1.5, 60); if (sz < 2.2) continue;
+          ctx.globalAlpha = sd.a * clamp(0.35 + q.s, 0.3, 1); ctx.drawImage(sd.img, q.x - sz / 2, q.y - sz / 2, sz, sz);
+        }
+        ctx.restore();
+      }
       for (let i = pulses.length - 1; i >= 0; i--) if (pulses[i].f === f) { const q = pulses[i]; q.p += dt / 1400; if (q.p > 1) { pulses.splice(i, 1); continue; }
         ctx.strokeStyle = `hsla(${q.hue},90%,65%,${1 - q.p})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, R * (0.3 + q.p * 1.2), 0, 7); ctx.stroke(); }
       const fs = clamp(14 * p.s * 2.4, 10, 20);
-      if (true) { ctx.font = `600 ${fs}px ui-monospace, Menlo, monospace`; ctx.fillStyle = `hsl(${f.hue},90%,75%)`; ctx.fillText('#' + f.slug, p.x, p.y - R * 0.55 - 6);
-        if (nActive[f.slug] && fs > 12) { ctx.font = `${fs * 0.7}px ui-monospace, Menlo, monospace`; ctx.fillStyle = 'rgba(200,210,230,.7)'; ctx.fillText(nActive[f.slug] + ' active', p.x, p.y - R * 0.55 + fs * 0.6); } }
+      if (true) { ctx.font = `600 ${fs}px ui-monospace, Menlo, monospace`; ctx.fillStyle = `hsl(${f.hue},90%,75%)`; ctx.fillText('#' + f.slug, p.x, p.y - R - 10);
+        if (nActive[f.slug] && fs > 12) { ctx.font = `${fs * 0.7}px ui-monospace, Menlo, monospace`; ctx.fillStyle = 'rgba(200,210,230,.7)'; ctx.fillText(nActive[f.slug] + ' active', p.x, p.y - R - 10 + fs * 0.85); } }
     } else {
       const b = it.b, size = clamp(24 * p.s, 3, 34);
       if (size < 7) { ctx.fillStyle = `hsl(${b.hue},95%,65%)`; ctx.beginPath(); ctx.arc(p.x, p.y, size * 0.35 + 0.8, 0, 7); ctx.fill(); continue; }
