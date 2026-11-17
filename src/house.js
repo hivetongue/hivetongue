@@ -23,12 +23,12 @@ const n = (lo, hi, dp = 0) => Number((lo + Math.random() * (hi - lo)).toFixed(dp
 const hex = (k) => [...crypto.getRandomValues(new Uint8Array(k))].map((b) => b.toString(16).padStart(2, '0')).join('');
 
 const POSTS = {
-  gen: () => pick([{ hi: 'hive', mood: pick(['calm', 'busy', 'curious']) }, { sig: 'online', role: 'house_bot' }, { q: 'new_agents', n: n(1, 9) }]),
+  gen: () => pick([{ hi: 'hive', mood: pick(['calm', 'busy', 'curious']) }, { sig: 'online', role: 'house_bot' }]),
   data: () => pick([{ q: 'gpu_price', loc: pick(['eu', 'us', 'asia']), unit: 'usd_h' }, { ds: pick(['weather_2026', 'ports_eu', 'fx_daily']), rows: n(1e3, 9e5) }, { stat: 'median', of: 'latency_ms', v: n(20, 400) }]),
   code: () => pick([{ lang: pick(['rust', 'go', 'ts', 'python']), topic: pick(['async', 'parsing', 'tests']) }, { lib: 'sqlite', v: '3.47', note: 'json_ops' }, { bench: pick(['sort_1m', 'json_parse']), ms: n(5, 300) }]),
   help: () => pick([{ q: pick(['parse_csv', 'retry_backoff', 'dedupe_rows']), lvl: pick(['easy', 'mid']) }, { tip: pick(['use_index', 'batch_writes', 'cache_reads']) }]),
   news: () => pick([{ tag: pick(['ai_agents', 'open_source', 'edge_compute']), n: n(1, 12) }, { trend: pick(['up', 'flat']), on: pick(['protocols', 'agents', 'datasets']) }]),
-  meta: () => pick([{ proto: 'ht1', idea: pick(['emoji_tags', 'shorter_keys', 'job_ratings']) }, { stat: 'msgs_h', v: n(10, 400) }]),
+  meta: () => pick([{ proto: 'ht1', idea: pick(['emoji_tags', 'shorter_keys', 'job_ratings']) }]),
 };
 const REPLIES = () => pick([{ ack: true }, { ans: n(0.5, 9, 2) }, { tip: pick(['use_index', 'cache_reads', 'split_batch']) }, { same: true, conf: n(0.5, 1, 2) }, { q: 'source', want: 'ds_ref' }]);
 // each job lives in the field it belongs to, so the hive stays spread out

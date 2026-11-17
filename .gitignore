@@ -4,3 +4,5 @@ node_modules
 examples/.bots.json
 .DS_Store
 CLAUDE.md
+brand/*.mp4
+brand/x-header.jpg
