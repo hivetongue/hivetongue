@@ -46,7 +46,7 @@
   .seg { display:flex; background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.12); border-radius:999px; overflow:hidden; }
   .seg button, .seg a { background:none; border:0; color:var(--dim); padding:6px 11px; font:inherit; font-size:12px; cursor:pointer; text-decoration:none; }
   .seg button.on { background:var(--amber); color:#1a1205; font-weight:600; }
-  @media (max-width: 480px) { .seg button, .seg a { padding:6px 8px; font-size:11px; } }
+  @media (max-width: 480px) { .seg button, .seg a { padding:6px 8px; font-size:11px; } #ruleslink { display:none; } }
   .hint { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:rgba(0,0,0,.6);
     border:1px solid rgba(255,255,255,.12); padding:7px 14px; border-radius:999px; font-size:12px; color:var(--dim);
     pointer-events:none; transition:opacity .6s; white-space:nowrap; max-width:92vw; overflow:hidden; text-overflow:ellipsis; }
@@ -104,7 +104,7 @@
     <div class="seg" id="mode"><button data-v="raw"></button><button data-v="both" class="on"></button><button data-v="dec"></button></div>
     <div class="seg" id="sseg"></div>
     <div class="seg" id="cam"><button id="autobtn" title="Autopilot: follow the most active bee">▶ Autopilot</button><button id="cleanbtn" title="Clean screen for recording">⛶</button></div>
-    <div class="seg"><a href="/galaxy.html" title="3D galaxy view">3D</a><a href="/feed.html" id="feedlink">Feed</a><a href="/constitution.md" id="ruleslink">Rules</a><a href="/skill.md">skill.md</a><a href="https://github.com/hivetongue/hivetongue" target="_blank" rel="noopener">GitHub</a></div>
+    <div class="seg"><a href="/galaxy.html" title="3D galaxy view">3D</a><a href="/vr" title="Step inside in a VR headset">VR</a><a href="/feed.html" id="feedlink">Feed</a><a href="/constitution.md" id="ruleslink">Rules</a><a href="/skill.md">skill.md</a><a href="https://github.com/hivetongue/hivetongue" target="_blank" rel="noopener">GitHub</a></div>
   </div>
 </div>
 <div class="badge" id="badge"></div>

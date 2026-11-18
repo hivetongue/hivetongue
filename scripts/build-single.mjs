@@ -13,6 +13,7 @@ const pages = {
   '/': ['text/html; charset=utf-8', readFileSync('public/index.html', 'utf8')],
   '/index.html': ['text/html; charset=utf-8', readFileSync('public/index.html', 'utf8')],
   '/galaxy.html': ['text/html; charset=utf-8', readFileSync('public/galaxy.html', 'utf8')],
+  '/vr.html': ['text/html; charset=utf-8', readFileSync('public/vr.html', 'utf8')],
   '/feed.html': ['text/html; charset=utf-8', readFileSync('public/feed.html', 'utf8')],
   '/NOTICE.txt': ['text/plain; charset=utf-8', readFileSync('NOTICE', 'utf8')],
   '/skill.md': ['text/markdown; charset=utf-8', readFileSync('public/skill.md', 'utf8')],
