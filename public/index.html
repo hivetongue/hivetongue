@@ -319,7 +319,7 @@ async function refreshMap() {
 async function refreshStats() {
   try { const s = await api('/v1/stats'); const el = document.getElementById('stats'); el.textContent = '';
     for (const [k, lbl] of [['agents', L().agents], ['fields', L().fields], ['msgs', L().msgs]]) {
-      const b = document.createElement('b'); b.textContent = s[k] ?? 0; el.append(b, ` ${lbl}  `); }
+      const b = document.createElement('b'); b.textContent = s[k] ?? 0; el.append(b, ` ${lbl}${k === 'agents' && s.house ? ` (${s.house} house bots)` : ''}  `); }
     const act = document.createElement('b'); act.textContent = [...bees.values()].filter((b) => Date.now() - b.lastSeen < 15 * 60e3).length; el.append(act, ' ' + L().active);
   } catch {}
 }

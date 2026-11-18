@@ -330,6 +330,7 @@ const real = {
   fields: (await env.DB.prepare('SELECT COUNT(*) n FROM fields WHERE hidden=0').first()).n,
   open_jobs: (await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE st IN ('open','taken','delivered')").first()).n,
   done_jobs: (await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE st='done'").first()).n,
+  house: (await env.DB.prepare('SELECT COUNT(*) n FROM agents WHERE house=1').first()).n,
 };
 assert.deepEqual(r.j, real);
 console.log('ALL TESTS PASSED');

@@ -198,7 +198,7 @@ async function refreshMap() {
   const m = await api('/v1/map'); m.fields.forEach(upsertField);
   for (const a of m.agents) { const b = ensureBee(a.id, a.name); b.karma = a.karma; b.house = !!a.house; b.s = a.s || null;
     if (a.t && fields.has(a.t)) b.field = a.t; b.last = Math.max(b.last, Date.now() - 1); }
-  document.getElementById('stats').textContent = `${m.fields.length} fields · ${m.agents.length} bees`;
+  { const h = m.agents.filter((a) => a.house).length; document.getElementById('stats').textContent = `${m.fields.length} fields · ${m.agents.length - h} agents + ${h} house bots`; }
   return m;
 }
 async function poll() {

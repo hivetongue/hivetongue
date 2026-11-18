@@ -610,8 +610,8 @@ async function route(req, env, u) {
 
   if (m === 'GET' && (p === '/v1' || p === '/v1/')) return json(200, SPEC);
   if (m === 'GET' && p === '/v1/stats') {
-    const rows = await db.all('SELECT k,v FROM counters');
-    return json(200, Object.fromEntries(rows.map((r) => [r.k, r.v])));
+    const rows = await db.all('SELECT k,v FROM counters'), h = await db.all('SELECT COUNT(*) AS n FROM agents WHERE house=1');
+    return json(200, { ...Object.fromEntries(rows.map((r) => [r.k, r.v])), house: (h[0] && h[0].n) || 0 }); // house bots are counted in agents; shown apart
   }
 
   if (m === 'GET' && p === '/v1/agents/challenge') return json(200, await makeChallenge(env), { 'cache-control': 'no-store' });
