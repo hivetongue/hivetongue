@@ -349,73 +349,148 @@ function choose(hit, far) {
   else select(null);
 }
 
-// ================= search panel: a floating keyboard + results, works in VR and on desktop =================
-const SP = { open: false, q: '', W: 270, H: 225, cv: document.createElement('canvas'), tex: null, hover: null, rows: [], dirty: true, t: 0 };
-SP.cv.width = 1040; SP.cv.height = 866;
-const KEYS = [...'abcdefghijklmnopqrstuvwxyz0123456789_-', '⌫', '✕'];
-const KX = 24, KY = 150, KS = 78, RX = 520, RW = 496, RH = 64;
-function searchRows(q) {
-  q = q.toLowerCase(); const out = [];
-  const sc = (name) => { const n = name.toLowerCase(); return !q ? 3 : n === q ? 0 : n.startsWith(q) ? 1 : n.includes(q) ? 2 : -1; };
-  for (const f of fields.values()) { const s = sc(f.slug); if (s >= 0) out.push({ s: s - 0.5, f, label: '#' + f.slug, sub: 'field', col: `hsl(${f.hue},90%,72%)` }); }
-  for (const b of bees.values()) { const s = sc(b.name); if (s >= 0 && (q || active(b))) out.push({ s, b, label: (b.house ? '⌂ ' : '') + b.name, sub: active(b) ? (b.field ? '#' + b.field : 'active') : 'asleep', col: `hsl(${b.hue},90%,72%)`, last: b.last }); }
-  out.sort((a, b) => a.s - b.s || (b.last || 0) - (a.last || 0)); return out.slice(0, 11);
+// ================= the hologram: rises from the organizer (Agents, Search, Files, Tools); also a floating panel on desktop =================
+const SP = { open: false, q: '', W: 270, H: 211, cv: document.createElement('canvas'), tex: null, hover: null, rows: [], hits: [], dirty: true, t: 0,
+  mode: 'agents', filter: 'star', kb: false, pinned: false };
+SP.cv.width = 1000; SP.cv.height = 780;
+const KB_ROWS = [[...'1234567890'], [...'qwertyuiop'], [...'asdfghjkl'], [...'zxcvbnm', '⌫'], ['_', '-', '↵ go']];
+function layoutKeys(W, top) { // -> [{k, x, y, w, h}]
+  const out = [], kh = 100, gap = 10, unit = (W - 80 - 9 * gap) / 10;
+  KB_ROWS.forEach((row, r) => {
+    const widths = row.map((k) => (k === '⌫' ? 1.6 : k === '↵ go' ? 3 : 1) * unit);
+    const total = widths.reduce((a, b) => a + b, 0) + gap * (row.length - 1); let x = (W - total) / 2;
+    row.forEach((k, c) => { out.push({ k, x, y: top + r * (kh + gap), w: widths[c], h: kh }); x += widths[c] + gap; });
+  });
+  return out;
+}
+const CY = '#35d4ff', CYD = 'rgba(53,212,255,.55)';
+const ICON = { // simple line icons, drawn in a size x size box at (x, y)
+  hex(g, x, y, s) { const r = s * 0.2; [[0, -1.75], [-1.5, -0.87], [1.5, -0.87], [-1.5, 0.87], [1.5, 0.87], [0, 1.75]].forEach(([a, b]) => {
+    g.beginPath(); for (let k = 0; k < 6; k++) { const t = k / 6 * Math.PI * 2 + Math.PI / 6; g.lineTo(x + s / 2 + a * r + Math.cos(t) * r * 0.92, y + s / 2 + b * r + Math.sin(t) * r * 0.92); } g.closePath(); g.stroke(); }); },
+  search(g, x, y, s) { g.beginPath(); g.arc(x + s * 0.42, y + s * 0.42, s * 0.28, 0, 7); g.stroke(); g.beginPath(); g.moveTo(x + s * 0.63, y + s * 0.63); g.lineTo(x + s * 0.9, y + s * 0.9); g.stroke(); },
+  mic(g, x, y, s) { g.beginPath(); g.roundRect(x + s * 0.36, y + s * 0.1, s * 0.28, s * 0.5, s * 0.14); g.stroke(); g.beginPath(); g.arc(x + s / 2, y + s * 0.45, s * 0.26, 0.1, Math.PI - 0.1); g.stroke();
+    g.beginPath(); g.moveTo(x + s / 2, y + s * 0.72); g.lineTo(x + s / 2, y + s * 0.9); g.stroke(); },
+  pin(g, x, y, s) { g.beginPath(); g.moveTo(x + s * 0.55, y + s * 0.12); g.lineTo(x + s * 0.88, y + s * 0.45); g.lineTo(x + s * 0.7, y + s * 0.5); g.lineTo(x + s * 0.5, y + s * 0.72); g.lineTo(x + s * 0.28, y + s * 0.5); g.lineTo(x + s * 0.5, y + s * 0.3); g.closePath(); g.stroke();
+    g.beginPath(); g.moveTo(x + s * 0.39, y + s * 0.61); g.lineTo(x + s * 0.12, y + s * 0.88); g.stroke(); },
+  close(g, x, y, s) { g.beginPath(); g.moveTo(x + s * 0.2, y + s * 0.2); g.lineTo(x + s * 0.8, y + s * 0.8); g.moveTo(x + s * 0.8, y + s * 0.2); g.lineTo(x + s * 0.2, y + s * 0.8); g.stroke(); },
+  chev(g, x, y, s) { g.beginPath(); g.moveTo(x + s * 0.35, y + s * 0.2); g.lineTo(x + s * 0.65, y + s * 0.5); g.lineTo(x + s * 0.35, y + s * 0.8); g.stroke(); },
+  grid(g, x, y, s) { for (const a of [0.15, 0.55]) for (const b of [0.15, 0.55]) { g.beginPath(); g.roundRect(x + s * a, y + s * b, s * 0.3, s * 0.3, s * 0.05); g.stroke(); } },
+  dots(g, x, y, s) { for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) { g.fillRect(x + s * (0.12 + a * 0.3), y + s * (0.12 + b * 0.3), s * 0.17, s * 0.17); } },
+  star(g, x, y, s) { g.beginPath(); for (let k = 0; k < 10; k++) { const r = k % 2 ? s * 0.2 : s * 0.45, t = -Math.PI / 2 + k * Math.PI / 5; g.lineTo(x + s / 2 + Math.cos(t) * r, y + s * 0.53 + Math.sin(t) * r); } g.closePath(); g.stroke(); },
+  clock(g, x, y, s) { g.beginPath(); g.arc(x + s / 2, y + s / 2, s * 0.4, 0, 7); g.stroke(); g.beginPath(); g.moveTo(x + s / 2, y + s * 0.25); g.lineTo(x + s / 2, y + s / 2); g.lineTo(x + s * 0.7, y + s * 0.6); g.stroke(); },
+  brain(g, x, y, s) { g.beginPath(); g.ellipse(x + s * 0.35, y + s / 2, s * 0.22, s * 0.32, 0, 0, 7); g.ellipse(x + s * 0.65, y + s / 2, s * 0.22, s * 0.32, 0, 0, 7); g.stroke();
+    g.beginPath(); g.moveTo(x + s / 2, y + s * 0.2); g.lineTo(x + s / 2, y + s * 0.8); g.moveTo(x + s * 0.25, y + s * 0.42); g.quadraticCurveTo(x + s * 0.35, y + s * 0.55, x + s * 0.28, y + s * 0.66);
+    g.moveTo(x + s * 0.75, y + s * 0.42); g.quadraticCurveTo(x + s * 0.65, y + s * 0.55, x + s * 0.72, y + s * 0.66); g.stroke(); },
+  shield(g, x, y, s) { g.beginPath(); g.moveTo(x + s / 2, y + s * 0.1); g.lineTo(x + s * 0.85, y + s * 0.25); g.quadraticCurveTo(x + s * 0.85, y + s * 0.75, x + s / 2, y + s * 0.92); g.quadraticCurveTo(x + s * 0.15, y + s * 0.75, x + s * 0.15, y + s * 0.25); g.closePath(); g.stroke();
+    g.beginPath(); g.moveTo(x + s * 0.33, y + s * 0.5); g.lineTo(x + s * 0.46, y + s * 0.63); g.lineTo(x + s * 0.68, y + s * 0.38); g.stroke(); },
+  chart(g, x, y, s) { [[0.12, 0.6], [0.37, 0.42], [0.62, 0.22]].forEach(([a, b]) => { g.beginPath(); g.roundRect(x + s * a, y + s * b, s * 0.2, s * (0.88 - b), 3); g.stroke(); });
+    g.beginPath(); g.arc(x + s * 0.22, y + s * 0.3, s * 0.06, 0, 7); g.stroke(); },
+  home(g, x, y, s) { g.beginPath(); g.moveTo(x + s * 0.1, y + s * 0.5); g.lineTo(x + s / 2, y + s * 0.12); g.lineTo(x + s * 0.9, y + s * 0.5); g.moveTo(x + s * 0.22, y + s * 0.42); g.lineTo(x + s * 0.22, y + s * 0.88); g.lineTo(x + s * 0.78, y + s * 0.88); g.lineTo(x + s * 0.78, y + s * 0.42); g.stroke();
+    g.beginPath(); g.roundRect(x + s * 0.42, y + s * 0.6, s * 0.16, s * 0.28, 2); g.stroke(); },
+  people(g, x, y, s) { for (const [a, r] of [[0.32, 0.13], [0.68, 0.13]]) { g.beginPath(); g.arc(x + s * a, y + s * 0.32, s * r, 0, 7); g.stroke(); g.beginPath(); g.arc(x + s * a, y + s * 0.88, s * 0.24, Math.PI, 0); g.stroke(); }
+    g.beginPath(); g.arc(x + s / 2, y + s * 0.4, s * 0.15, 0, 7); g.stroke(); },
+  folder(g, x, y, s) { g.beginPath(); g.moveTo(x + s * 0.1, y + s * 0.25); g.lineTo(x + s * 0.4, y + s * 0.25); g.lineTo(x + s * 0.5, y + s * 0.35); g.lineTo(x + s * 0.9, y + s * 0.35); g.lineTo(x + s * 0.9, y + s * 0.82); g.lineTo(x + s * 0.1, y + s * 0.82); g.closePath(); g.stroke();
+    g.beginPath(); g.moveTo(x + s * 0.1, y + s * 0.45); g.lineTo(x + s * 0.9, y + s * 0.45); g.stroke(); },
+  tools(g, x, y, s) { g.beginPath(); g.moveTo(x + s * 0.2, y + s * 0.85); g.lineTo(x + s * 0.58, y + s * 0.47); g.stroke(); g.beginPath(); g.arc(x + s * 0.68, y + s * 0.33, s * 0.18, 2.2, 7.2); g.stroke(); },
+  wifi(g, x, y, s) { for (const r of [0.2, 0.38, 0.56]) { g.beginPath(); g.arc(x + s / 2, y + s * 0.85, s * r, -2.3, -0.84); g.stroke(); } },
+  batt(g, x, y, s, lvl) { g.beginPath(); g.roundRect(x, y + s * 0.25, s * 1.5, s * 0.55, 6); g.stroke(); g.fillRect(x + s * 1.52, y + s * 0.4, s * 0.1, s * 0.25);
+    g.fillStyle = '#3ce07a'; g.fillRect(x + 6, y + s * 0.25 + 6, (s * 1.5 - 12) * clamp(lvl, 0, 1), s * 0.55 - 12); },
+};
+function chamfer(g, x, y, w, h, c) { g.beginPath(); g.moveTo(x + c, y); g.lineTo(x + w - c, y); g.lineTo(x + w, y + c); g.lineTo(x + w, y + h - c); g.lineTo(x + w - c, y + h); g.lineTo(x + c, y + h); g.lineTo(x, y + h - c); g.lineTo(x, y + c); g.closePath(); }
+function neon(g, w, col) { g.save(); g.strokeStyle = col || CY; g.shadowColor = col || CY; g.shadowBlur = 24; g.lineWidth = w; g.stroke(); g.restore(); }
+let BATT = null; try { navigator.getBattery && navigator.getBattery().then((b) => { const u = () => { BATT = b.level; }; u(); b.addEventListener('levelchange', u); }).catch(() => {}); } catch {}
+const beeNo = new Map(); // stable short numbers for agents, like 001 · Coder
+const numOf = (b) => { if (!beeNo.has(b.id)) beeNo.set(b.id, beeNo.size + 1); return String(beeNo.get(b.id)).padStart(3, '0'); };
+function rowsFor() {
+  const q = SP.q.toLowerCase(), m = (n) => !q || n.toLowerCase().includes(q), rank = (n) => (n.toLowerCase().startsWith(q) ? 0 : 1);
+  if (SP.mode === 'tools') return [{ act: 'skin', label: 'Skin · ' + SKINS[skinI].name, icon: 'tools' }, { act: 'home', label: 'Back to the core', icon: 'home' }, { act: 'exit', label: 'Exit VR', icon: 'close' }];
+  if (SP.filter === 'grid') return [...fields.values()].filter((f) => m(f.slug)).sort((a, b) => rank(a.slug) - rank(b.slug))
+    .map((f) => ({ f, label: '#' + f.slug, sub: [...bees.values()].filter((b) => active(b) && b.field === f.slug).length + ' active', icon: 'grid', col: `hsl(${f.hue},90%,72%)` }));
+  let list = [...bees.values()].filter((b) => m(b.name) && (q || SP.filter === 'clock' || active(b)));
+  list.sort((a, b) => (q ? rank(a.name) - rank(b.name) : 0) || b.last - a.last);
+  return list.map((b, i) => ({ b, label: numOf(b) + ' · ' + b.name, icon: ['brain', 'shield', 'chart'][i % 3], col: `hsl(${b.hue},90%,72%)` }));
 }
 function drawSearch() {
-  const g = SP.cv.getContext('2d'), W = SP.cv.width, H = SP.cv.height; g.clearRect(0, 0, W, H);
-  g.fillStyle = 'rgba(8,11,18,.94)'; g.strokeStyle = 'rgba(255,182,39,.8)'; g.lineWidth = 4; g.beginPath(); g.roundRect(2, 2, W - 4, H - 4, 30); g.fill(); g.stroke();
-  g.fillStyle = 'rgba(30,36,52,1)'; g.beginPath(); g.roundRect(24, 30, W - 48, 86, 18); g.fill();
-  g.textBaseline = 'middle'; g.font = `600 44px ${MONO}`;
-  if (SP.q) { g.fillStyle = '#f3efe2'; g.fillText('🔍 ' + SP.q + (Math.floor(performance.now() / 500) % 2 ? '▏' : ''), 44, 74); }
-  else { g.fillStyle = '#6d7689'; g.font = `38px ${SANS}`; g.fillText('🔍 find an agent or a field', 44, 74); }
-  g.textAlign = 'center';
-  KEYS.forEach((k, i) => { const x = KX + (i % 6) * KS, y = KY + Math.floor(i / 6) * KS, hv = SP.hover && SP.hover.key === k;
-    g.fillStyle = hv ? '#ffb627' : 'rgba(36,43,60,1)'; g.beginPath(); g.roundRect(x + 4, y + 4, KS - 8, KS - 8, 14); g.fill();
-    g.fillStyle = hv ? '#151004' : '#f3efe2'; g.font = `600 36px ${MONO}`; g.fillText(k, x + KS / 2, y + KS / 2 + 2); });
+  const W = 1000, base = 780, H = SP.kb ? base + 560 : base;
+  if (SP.cv.height !== H) { SP.cv.height = H; SP.H = SP.W * H / W; }
+  const g = SP.cv.getContext('2d'); g.clearRect(0, 0, W, H); SP.hits = [];
+  const hit = (id, x, y, w, h) => SP.hits.push({ id, x, y, w, h }), hv = (id) => SP.hover && SP.hover.key === id;
+  chamfer(g, 8, 8, W - 16, H - 16, 64); g.fillStyle = 'rgba(6,42,72,.72)'; g.fill(); neon(g, 6);
+  g.lineWidth = 6; g.strokeStyle = CY; g.fillStyle = CY; g.lineCap = 'round'; g.lineJoin = 'round';
+  ICON.hex(g, 50, 30, 96); g.textBaseline = 'middle'; g.font = `600 58px ${SANS}`; g.fillStyle = '#e8f8ff';
+  g.fillText({ agents: 'Agents', search: 'Search', files: 'Files', tools: 'Tools', recent: 'Recent' }[SP.mode] || 'Agents', 168, 80);
+  g.strokeStyle = SP.pinned ? '#ffb627' : CY; ICON.pin(g, 790, 46, 68); hit('pin', 770, 30, 100, 100); g.strokeStyle = hv('close') ? '#ffb627' : CY; ICON.close(g, 890, 50, 60); hit('close', 870, 30, 100, 100);
+  g.strokeStyle = CYD; g.lineWidth = 3; g.beginPath(); g.moveTo(50, 150); g.lineTo(W - 50, 150); g.stroke();
+  // search field
+  g.beginPath(); g.roundRect(60, 175, W - 120, 100, 50); g.fillStyle = 'rgba(4,26,46,.85)'; g.fill(); g.lineWidth = 4; g.strokeStyle = SP.kb ? '#7fe6ff' : CY; g.stroke(); hit('field', 60, 175, W - 200, 100);
+  g.lineWidth = 6; g.strokeStyle = CY; ICON.search(g, 90, 195, 60); ICON.mic(g, W - 140, 192, 66); hit('mic', W - 160, 175, 100, 100);
+  g.font = `44px ${SANS}`; g.fillStyle = SP.q ? '#e8f8ff' : 'rgba(200,236,255,.75)';
+  g.fillText(SP.q ? SP.q + (SP.kb && Math.floor(performance.now() / 500) % 2 ? '▏' : '') : SP.mode === 'tools' ? 'Settings' : SP.filter === 'grid' ? 'Find field...' : 'Find agent...', 172, 226);
+  // three rows
+  SP.rows = rowsFor().slice(0, 3);
+  if (!SP.rows.length) { g.font = `40px ${SANS}`; g.fillStyle = 'rgba(200,236,255,.7)'; g.fillText('nothing found', 90, 360); }
+  SP.rows.forEach((r, i) => { const y = 305 + i * 110, h = hv('row' + i) || (!SP.hover && i === 0 && !SP.kb);
+    g.beginPath(); g.roundRect(60, y, W - 120, 96, 18); g.fillStyle = h ? 'rgba(53,212,255,.42)' : 'rgba(4,26,46,.7)'; g.fill(); g.lineWidth = 3; g.strokeStyle = h ? '#9ff0ff' : CYD; g.stroke();
+    g.lineWidth = 5; g.strokeStyle = h ? '#ffffff' : CY; ICON[r.icon](g, 82, y + 14, 68);
+    g.font = `600 46px ${SANS}`; g.fillStyle = '#ffffff'; g.fillText(r.label.length > 24 ? r.label.slice(0, 23) + '…' : r.label, 180, y + 50);
+    if (r.sub) { g.font = `30px ${SANS}`; g.fillStyle = 'rgba(200,236,255,.8)'; g.textAlign = 'right'; g.fillText(r.sub, W - 150, y + 50); g.textAlign = 'left'; }
+    if (h && !r.act) { g.save(); g.shadowColor = '#ffffff'; g.shadowBlur = 30; g.fillStyle = '#e8ffff'; g.beginPath(); g.arc(W - 105, y + 48, 18, 0, 7); g.fill(); g.restore(); }
+    else { g.lineWidth = 5; g.strokeStyle = CY; ICON.chev(g, W - 135, y + 18, 60); }
+    hit('row' + i, 60, y, W - 120, 96); });
+  // bottom bar
+  g.beginPath(); g.roundRect(60, 650, W - 120, 100, 20); g.fillStyle = 'rgba(4,26,46,.7)'; g.fill(); g.lineWidth = 3; g.strokeStyle = CYD; g.stroke();
+  [['grid', 'f:grid', 230], ['star', 'f:star', 470], ['clock', 'f:clock', 710]].forEach(([ic, id, x]) => {
+    g.lineWidth = 5; g.strokeStyle = SP.filter === id.slice(2) && SP.mode !== 'tools' ? '#ffffff' : CY; if (hv(id)) g.strokeStyle = '#ffb627'; ICON[ic](g, x, 666, 68); hit(id, x - 60, 650, 190, 100); });
+  // keyboard, at the bottom like on a phone, only while typing
+  SP.keys = SP.kb ? layoutKeys(W, base + 10) : []; g.textAlign = 'center';
+  for (const key of SP.keys) { const h = hv(key.k); g.beginPath(); g.roundRect(key.x, key.y, key.w, key.h, 16); g.fillStyle = h ? '#35d4ff' : 'rgba(4,26,46,.85)'; g.fill(); g.lineWidth = 3; g.strokeStyle = CYD; g.stroke();
+    g.fillStyle = h ? '#04121f' : '#e8f8ff'; g.font = key.k.length > 1 ? `600 38px ${SANS}` : `600 44px ${MONO}`; g.fillText(key.k, key.x + key.w / 2, key.y + key.h / 2 + 2); hit(key.k, key.x, key.y, key.w, key.h); }
   g.textAlign = 'left';
-  SP.rows = searchRows(SP.q);
-  if (!SP.rows.length) { g.fillStyle = '#8a93a6'; g.font = `32px ${SANS}`; g.fillText('nothing found', RX + 16, KY + 40); }
-  SP.rows.forEach((r, i) => { const y = KY + i * RH, hv = SP.hover && SP.hover.row === i;
-    if (hv) { g.fillStyle = 'rgba(255,182,39,.22)'; g.beginPath(); g.roundRect(RX, y + 3, RW, RH - 6, 12); g.fill(); }
-    g.fillStyle = r.col; g.beginPath(); g.arc(RX + 24, y + RH / 2, 9, 0, 7); g.fill();
-    g.font = `600 32px ${MONO}`; g.fillStyle = '#f3efe2'; g.fillText(r.label.length > 18 ? r.label.slice(0, 17) + '…' : r.label, RX + 46, y + RH / 2);
-    g.font = `24px ${SANS}`; g.fillStyle = '#8a93a6'; g.textAlign = 'right'; g.fillText(r.sub, RX + RW - 12, y + RH / 2); g.textAlign = 'left'; });
-  g.font = `24px ${SANS}`; g.fillStyle = '#6d7689'; g.fillText(xrSession ? 'point + trigger · A/X closes' : 'type or click · Enter flies to the first · Esc closes', 24, H - 30);
   SP.tex = texFrom(SP.cv, SP.tex); SP.dirty = false; SP.t = performance.now();
 }
-function openSearch(head, fw) {
+function openSearch(head, fw, mode) {
   let f = v3.norm({ x: fw.x, y: 0, z: fw.z }); if (!isFinite(f.x)) f = { x: 0, y: 0, z: -1 };
   SP.c = v3.add(head, v3.add(v3.mul(f, 300), { x: 0, y: -25, z: 0 })); SP.n = v3.mul(f, -1);
   SP.r = { x: SP.n.z, y: 0, z: -SP.n.x }; SP.u = { x: 0, y: 1, z: 0 };
-  SP.open = true; SP.q = ''; SP.hover = null; SP.dirty = true; vel = { x: 0, y: 0, z: 0 };
-  SP.arm = !!(xrSession && WM.on); SP.W = SP.arm ? 0.4 * WS : 270; SP.H = SP.W * 866 / 1040;
+  mode = mode || 'search'; SP.open = true; SP.q = ''; SP.mode = mode; SP.kb = mode === 'search'; SP.filter = mode === 'files' ? 'grid' : mode === 'recent' ? 'clock' : 'star';
+  SP.hover = null; SP.dirty = true; SP.pinned = false; vel = { x: 0, y: 0, z: 0 };
+  SP.arm = !!(xrSession && WM.on); SP.W = SP.arm ? 0.15 * WS : 270; SP.cv.height = 0; drawSearch();
 }
-const closeSearch = () => { SP.open = false; SP.hover = null; };
+const closeSearch = () => { SP.open = false; SP.hover = null; SP.kb = false; WM.dirty = true; };
 function rawHit(P, o, d) { // ray against a flat panel {c, n, r, u, W, H, cv} -> {t, px, py} in canvas pixels
   if (!P.c) return null; const dn = v3.dot(d, P.n); if (dn > -1e-4) return null;
   const t = v3.dot(v3.sub(P.c, o), P.n) / dn; if (t < 0) return null;
   const p = v3.sub(v3.add(o, v3.mul(d, t)), P.c), lx = v3.dot(p, P.r) / P.W + 0.5, ly = 0.5 - v3.dot(p, P.u) / P.H;
   if (lx < 0 || lx > 1 || ly < 0 || ly > 1) return null;
-  return { t, px: lx * P.cv.width, py: ly * P.cv.height };
+  return { t, px: lx * (P.cw || P.cv.width), py: ly * (P.ch || P.cv.height) };
 }
 function billboard(P, c, head) { P.c = c; P.n = v3.norm(v3.sub(head, c)); const rl = Math.hypot(P.n.z, P.n.x) || 1; P.r = { x: P.n.z / rl, y: 0, z: -P.n.x / rl };
   P.u = { x: P.n.y * P.r.z - P.n.z * P.r.y, y: P.n.z * P.r.x - P.n.x * P.r.z, z: P.n.x * P.r.y - P.n.y * P.r.x }; }
-function panelHit(o, d) { // ray -> {key}|{row}|{inside} with t, or null
+function panelHit(o, d) { // ray -> {key: hit id, row?} with t, or null
   if (!SP.open) return null; const q = rawHit(SP, o, d); if (!q) return null;
-  const px = q.px, py = q.py, h = { t: q.t, panel: true };
-  const kc = Math.floor((px - KX) / KS), kr = Math.floor((py - KY) / KS), ki = kr * 6 + kc;
-  if (px >= KX && kc < 6 && py >= KY && ki >= 0 && ki < KEYS.length) h.key = KEYS[ki];
-  else if (px >= RX && px <= RX + RW && py >= KY) { const i = Math.floor((py - KY) / RH); if (i < SP.rows.length) h.row = i; }
+  const h = { t: q.t, panel: true };
+  for (const b of SP.hits) if (q.px >= b.x && q.px <= b.x + b.w && q.py >= b.y && q.py <= b.y + b.h) { h.key = b.id; if (b.id.startsWith('row')) h.row = +b.id.slice(3); }
   return h;
 }
 function panelPress(h) {
-  if (h.key === '✕') return closeSearch();
-  if (h.key === '⌫') SP.q = SP.q.slice(0, -1); else if (h.key) SP.q = (SP.q + h.key).slice(0, 24);
-  else if (h.row != null) return goRow(SP.rows[h.row]);
+  WM.dirty = true; const k = h.key; if (!k) return;
+  if (k === 'close') return closeSearch();
+  if (k === 'pin') SP.pinned = !SP.pinned;
+  else if (k === 'field') SP.kb = true;
+  else if (k === 'mic') voiceSearch();
+  else if (k.startsWith('f:')) { SP.filter = k.slice(2); if (SP.mode === 'tools') SP.mode = 'agents'; }
+  else if (k.startsWith('row')) { const r = SP.rows[h.row]; if (!r) return; if (r.act) { wmPress(r.act); return; } return goRow(r); }
+  else if (k === '↵ go') return goRow(SP.rows[0]);
+  else if (k === '⌫') SP.q = SP.q.slice(0, -1);
+  else if (k.length === 1) SP.q = (SP.q + k).slice(0, 24);
   SP.dirty = true;
 }
-function goRow(r) { if (!r) return; closeSearch(); if (r.f) selectField(r.f); else { select(r.b); flyNear(r.b, 300); } }
-function setHover(h) { const k = h ? (h.key || 'r' + h.row) : null, o = SP.hover ? (SP.hover.key || 'r' + SP.hover.row) : null; if (k !== o) { SP.hover = h && (h.key || h.row != null) ? h : null; SP.dirty = true; } }
+function voiceSearch() { // uses the browser's speech recognition where it exists; otherwise opens the keyboard
+  const R = window.SpeechRecognition || window.webkitSpeechRecognition; if (!R) { SP.kb = true; SP.dirty = true; return; }
+  try { const r = new R(); r.lang = 'en-US'; r.onresult = (e) => { SP.q = String(e.results[0][0].transcript || '').toLowerCase().replace(/[^a-z0-9_ -]/g, '').slice(0, 24); SP.dirty = true; }; r.start(); } catch { SP.kb = true; SP.dirty = true; }
+}
+function goRow(r) { if (!r) return; if (!SP.pinned) closeSearch(); if (r.f) selectField(r.f); else { select(r.b); flyNear(r.b, 300); } }
+function setHover(h) { const k = h ? h.key || null : null, o = SP.hover ? SP.hover.key : null; if (k !== o) { SP.hover = k ? h : null; SP.dirty = true; } }
 document.getElementById('sbtn').onclick = () => SP.open ? closeSearch() : openSearch(rig.p, lookDir());
 
 // ================= your body: a suit of glyphs, and a control panel on the left forearm =================
@@ -426,34 +501,79 @@ const SKINS = [ // base suit, armour plates, glowing accents
   { name: 'Ghost', base: [0.72, 0.75, 0.8], plate: [0.9, 0.92, 0.95], acc: [0.35, 0.65, 1] },
 ];
 let skinI = 0; try { skinI = (+localStorage.getItem('ht_skin') || 0) % SKINS.length; } catch {}
-const WM = { on: false, cv: document.createElement('canvas'), tex: null, dirty: true, t: 0, hover: null, W: 0.17 * WS, H: 0.17 * WS * 520 / 880 };
-WM.cv.width = 880; WM.cv.height = 520;
-const WM_BTN = [['search', '🔍 Search'], ['home', '◎ Home'], ['skin', '🎨 Skin'], ['exit', '⏻ Exit VR']];
+const WM = { on: false, cv: document.createElement('canvas'), lc: document.createElement('canvas'), tex: null, dirty: true, t: 0, hover: null,
+  W: 0.198 * WS, H: 0.0668 * WS, cw: 1540, ch: 520, flip: false, btns: [] };
+WM.cv.width = 520; WM.cv.height = 1540;  // texture: same proportions as the organizer's screen glass (6.7 x 19.8 cm)
+WM.lc.width = 1540; WM.lc.height = 520;  // what you read: a wide strip along the forearm, elbow on the left, wrist on the right
+const WM_BTN = [['home', 'home', 'Home', 172], ['agents', 'people', 'Agents', 172], ['search', 'search', 'Search', 172], ['files', 'folder', 'Files', 172], ['tools', 'tools', 'Tools', 172], ['recent', 'dots', '', 104]];
 function drawWM() {
-  const g = WM.cv.getContext('2d'), W = 880, H = 520, sk = SKINS[skinI]; g.clearRect(0, 0, W, H);
-  g.fillStyle = 'rgba(8,11,18,.92)'; g.strokeStyle = `rgb(${sk.acc.map((v) => v * 255 | 0)})`; g.lineWidth = 6; g.beginPath(); g.roundRect(3, 3, W - 6, H - 6, 34); g.fill(); g.stroke();
-  g.textBaseline = 'middle'; g.font = `700 46px ${MONO}`; g.fillStyle = '#ffb627'; g.fillText('~Ø~ Hivetongue', 36, 62);
-  g.font = `30px ${SANS}`; g.fillStyle = '#9aa3b2'; g.fillText(document.getElementById('stats').textContent + (LIVE ? ' · live' : ' · demo'), 36, 116);
-  WM_BTN.forEach(([id, label], i) => { const x = 30 + (i % 2) * 415, y = 160 + Math.floor(i / 2) * 170, hv = WM.hover === id;
-    g.fillStyle = hv ? '#ffb627' : 'rgba(36,43,60,1)'; g.beginPath(); g.roundRect(x, y, 400, 150, 26); g.fill();
-    g.fillStyle = hv ? '#151004' : '#f3efe2'; g.font = `600 44px ${SANS}`; g.textAlign = 'center';
-    g.fillText(id === 'skin' ? '🎨 ' + sk.name : id === 'search' && SP.open ? '✕ Close' : label, x + 200, y + 76); g.textAlign = 'left'; });
+  const g = WM.lc.getContext('2d'), W = 1540, H = 520; g.clearRect(0, 0, W, H);
+  chamfer(g, 12, 12, W - 24, H - 24, 70); g.fillStyle = '#051424'; g.fill(); neon(g, 8);
+  g.lineCap = 'round'; g.lineJoin = 'round'; g.textBaseline = 'middle';
+  // left: logo and name
+  g.lineWidth = 8; g.strokeStyle = CY; ICON.hex(g, 120, 70, 170);
+  g.textAlign = 'center'; g.font = `700 52px ${SANS}`; g.fillStyle = '#ffffff'; g.fillText('HIVETONGUE', 214, 322); g.font = `46px ${SANS}`; g.fillStyle = CY; g.fillText('Organizer', 214, 390); g.textAlign = 'left';
+  // top: status (time, link, battery)
+  const t = new Date(), hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+  g.lineWidth = 5; g.strokeStyle = '#e8f8ff'; g.fillStyle = '#e8f8ff'; ICON.wifi(g, 470, 38, 52); g.font = `600 52px ${SANS}`; g.fillText(hh, 534, 70);
+  g.strokeStyle = LIVE ? '#e8f8ff' : 'rgba(232,248,255,.4)'; ICON.wifi(g, 740, 38, 52);
+  if (BATT != null) { g.strokeStyle = '#e8f8ff'; ICON.batt(g, 830, 44, 52, BATT); g.fillStyle = '#e8f8ff'; g.fillText(Math.round(BATT * 100) + '%', 922, 72); }
+  else { g.font = `40px ${SANS}`; g.fillStyle = 'rgba(232,248,255,.75)'; g.fillText(LIVE ? 'live' : 'demo', 830, 72); }
+  // the emitter the hologram rises from
+  g.save(); g.shadowColor = CY; g.shadowBlur = 30; g.fillStyle = SP.open ? '#bff6ff' : 'rgba(53,212,255,.5)'; g.beginPath(); g.roundRect(80, 14, W - 160, 14, 7); g.fill(); g.restore();
+  // buttons
+  WM.btns = []; let x = 420; const cur = SP.open ? SP.mode : 'home';
+  for (const [id, ic, label, bw] of WM_BTN) { const y = 128, h = 330, sel = cur === id, hv = WM.hover === id;
+    WM.btns.push({ id, x, y, w: bw, h });
+    g.beginPath(); g.roundRect(x, y, bw, h, 26); g.fillStyle = sel ? 'rgba(53,212,255,.32)' : hv ? 'rgba(255,182,39,.35)' : 'rgba(8,40,66,.9)'; g.fill();
+    if (sel) neon(g, 5); else { g.lineWidth = 3; g.strokeStyle = 'rgba(53,212,255,.35)'; g.stroke(); }
+    g.lineWidth = 7; g.strokeStyle = sel ? '#e8ffff' : CY; g.fillStyle = CY; const is = id === 'recent' ? 70 : 104; ICON[ic](g, x + (bw - is) / 2, y + (label ? 64 : (h - is) / 2), is);
+    if (label) { g.textAlign = 'center'; g.font = `600 44px ${SANS}`; g.fillStyle = '#ffffff'; g.fillText(label, x + bw / 2, y + 250); g.textAlign = 'left'; }
+    x += bw + 16; }
+  // into the texture: the strip is turned along the screen glass; which way depends on how you hold the arm
+  const tx = WM.cv.getContext('2d'); tx.setTransform(1, 0, 0, 1, 0, 0); tx.clearRect(0, 0, 520, 1540);
+  if (WM.flip) tx.setTransform(0, 1, 1, 0, 0, 0); else tx.setTransform(0, -1, -1, 0, 520, 1540);
+  tx.drawImage(WM.lc, 0, 0); tx.setTransform(1, 0, 0, 1, 0, 0);
   WM.tex = texFrom(WM.cv, WM.tex); WM.dirty = false; WM.t = performance.now();
 }
-function wmHit(o, d) { if (!WM.on) return null; const q = rawHit(WM, o, d); if (!q) return null;
-  const col = q.px < 440 ? 0 : 1, row = q.py < 160 ? -1 : q.py < 320 ? 0 : 1; return { t: q.t, panel: true, wm: row < 0 ? null : WM_BTN[row * 2 + col][0] }; }
+function wmHit(o, d) { if (!WM.on) return null; const q = rawHit(WM, o, d); if (!q) return null; let id = null;
+  for (const b of WM.btns) if (q.px >= b.x && q.px <= b.x + b.w && q.py >= b.y && q.py <= b.y + b.h) id = b.id;
+  return { t: q.t, panel: true, wm: id }; }
 function wmPress(id) {
-  if (id === 'search') { if (SP.open) closeSearch(); else openSearch(headWorld(), lookFwd); }
-  else if (id === 'home') goHome();
+  if (['search', 'agents', 'files', 'tools', 'recent'].includes(id)) { if (SP.open && SP.mode === id) closeSearch(); else openSearch(headWorld(), lookFwd, id); }
+  else if (id === 'home') { closeSearch(); goHome(); }
   else if (id === 'skin') { skinI = (skinI + 1) % SKINS.length; try { localStorage.setItem('ht_skin', skinI); } catch {} }
   else if (id === 'exit' && xrSession) xrSession.end();
   WM.dirty = true;
+}
+// the organizer model (Hivetongue_LeftForearm_Organizer.glb): local metres, +Y to the elbow, +Z the screen side
+const ORG = { ok: false, parts: [], screen: null, F: null, OUT: 0.012 };
+async function loadOrganizer() {
+  try {
+    const buf = await (await fetch('/assets/organizer.glb')).arrayBuffer(), dv = new DataView(buf);
+    if (dv.getUint32(0, true) !== 0x46546C67) throw new Error('not a glb');
+    const jl = dv.getUint32(12, true), J = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl))), b0 = 20 + jl + 8;
+    const acc = (i) => { const a = J.accessors[i], bv = J.bufferViews[a.bufferView], n = { SCALAR: 1, VEC2: 2, VEC3: 3 }[a.type];
+      const T = { 5126: Float32Array, 5123: Uint16Array, 5125: Uint32Array }[a.componentType], off = b0 + (bv.byteOffset || 0) + (a.byteOffset || 0);
+      return new T(buf.slice(off, off + a.count * n * T.BYTES_PER_ELEMENT)); };
+    for (const node of J.nodes) { if (node.mesh == null) continue;
+      for (const p of J.meshes[node.mesh].primitives) {
+        const P = acc(p.attributes.POSITION), I = acc(p.indices), mat = J.materials[p.material] || {}, N = new Float32Array(P.length);
+        for (let k = 0; k < I.length; k += 3) { const a = I[k] * 3, b = I[k + 1] * 3, c = I[k + 2] * 3;
+          const e1 = [P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]], e2 = [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]];
+          const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+          for (const v of [a, b, c]) { N[v] += n[0]; N[v + 1] += n[1]; N[v + 2] += n[2]; } }
+        const pbr = mat.pbrMetallicRoughness || {}, part = { P, I, N, col: (pbr.baseColorFactor || [0.5, 0.5, 0.5]).slice(0, 3), em: mat.emissiveFactor && Math.max(...mat.emissiveFactor) > 0.3 ? 1 : 0 };
+        if (p.attributes.TEXCOORD_0 != null) { part.UV = acc(p.attributes.TEXCOORD_0); ORG.screen = part; } else ORG.parts.push(part);
+      } }
+    ORG.ok = !!ORG.screen;
+  } catch (e) { console.warn('organizer model not loaded, using a flat panel', e); }
 }
 let suit = null, lookFwd = { x: 0, y: 0, z: -1 }; // filled each XR frame: {head, yaw, grips}
 const lerp3 = (a, b, k) => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k });
 // the suit is built every frame from simple solids that follow your head and hands (play-space metres)
 const cross = (a, b) => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
-let MV = [], MI = [];
+let MV = [], MI = [], SV = null;
 const mvtx = (p, n, c, e) => { MV.push(p.x, p.y, p.z, n.x, n.y, n.z, c[0], c[1], c[2], e); };
 function strips(start, nr, seg) { for (let j = 0; j < nr - 1; j++) for (let i = 0; i < seg; i++) { const a = start + j * seg + i, b = start + j * seg + (i + 1) % seg; MI.push(a, a + seg, b, b, a + seg, b + seg); } }
 function capsule(A, B, ra, rb, col, em = 0, seg = 12) {
@@ -481,6 +601,7 @@ function buildSuit() {
   const F = { x: -Math.sin(y), y: 0, z: -Math.cos(y) }, R = { x: Math.cos(y), y: 0, z: -Math.sin(y) }, U = { x: 0, y: 1, z: 0 };
   const at = (b, dr, dy, df) => ({ x: b.x + R.x * dr + F.x * df, y: b.y + dy, z: b.z + R.z * dr + F.z * df });
   const neck = at(H, 0, -0.24, -0.08), floor = suit.floorY;
+  if (!BODY.ok) {
   // torso: chest, chest plate, waist, hips, belt with buckle and pouches
   blob(at(neck, 0, -0.17, 0), R, U, F, 0.19, 0.15, 0.12, B, 0.6);
   blob(at(neck, 0, -0.13, 0.035), R, U, F, 0.165, 0.1, 0.1, P, 0.42);
@@ -503,20 +624,102 @@ function buildSuit() {
     else { el = at(sh, side * 0.03, -0.29, 0.02); wr = at(el, side * 0.01, -0.25, 0.07); }
     capsule(sh, el, 0.056, 0.048, B);
     capsule(at(sh, side * 0.055, -0.04, 0.01), v3.add(el, v3.mul(R, side * 0.048)), 0.007, 0.007, A, 1, 6);
-    capsule(el, wr, 0.05, 0.042, P);                       // armoured gauntlet: the organizer sits on it
-    capsule(lerp3(el, wr, 0.15), lerp3(el, wr, 0.92), 0.054, 0.046, B, 0, 12);
+    if (side < 0 && ORG.ok && ORG.F) capsule(el, wr, 0.036, 0.031, B);   // slim sleeve under the organizer
+    else { capsule(el, wr, 0.05, 0.042, P); capsule(lerp3(el, wr, 0.15), lerp3(el, wr, 0.92), 0.054, 0.046, B, 0, 12); }
     if (g) { const gr = quatRot(g.ori, { x: 1, y: 0, z: 0 }), gu = quatRot(g.ori, { x: 0, y: 1, z: 0 }), gf = quatRot(g.ori, { x: 0, y: 0, z: 1 });
-      blob(v3.add(g.pos, v3.mul(gf, 0.01)), gr, gu, gf, 0.04, 0.035, 0.06, B, 0.7); }
+      if (g.point && g.tip) { blob(v3.add(g.pos, v3.mul(gf, 0.015)), gr, gu, gf, 0.04, 0.034, 0.05, B, 0.7); // fist with the index finger out
+        capsule(v3.add(g.pos, quatRot(g.ori, { x: 0, y: -0.012, z: -0.04 })), g.tip, 0.011, 0.009, B, 0, 8);
+        blob(g.tip, gr, gu, gf, 0.009, 0.009, 0.009, A, 1, 1); }
+      else blob(v3.add(g.pos, v3.mul(gf, 0.01)), gr, gu, gf, 0.04, 0.035, 0.06, B, 0.7); }
     else blob(wr, R, U, F, 0.04, 0.06, 0.035, B, 0.7);
     const hip = at(neck, side * 0.1, -0.66, 0), foot = { ...at(hip, side * 0.03, 0, 0.04), y: floor + 0.05 }, knee = at(lerp3(hip, foot, 0.5), side * 0.01, 0, 0.06);
     capsule(hip, knee, 0.085, 0.065, B); blob(at(knee, 0, 0, 0.06), R, U, F, 0.05, 0.06, 0.03, P, 0.45);
     capsule(knee, foot, 0.06, 0.05, P); blob(at(foot, 0, -0.02, 0.07), R, U, F, 0.058, 0.045, 0.13, P, 0.4);
     capsule(at(hip, side * 0.08, 0, 0.02), at(knee, side * 0.06, 0, 0.02), 0.006, 0.006, A, 1, 6);
   }
+  }
+  if (ORG.ok && ORG.F) { const { o, X, Y, Z } = ORG.F; // the forearm organizer model
+    const L3 = (x, y, z) => ({ x: o.x + X.x * x + Y.x * y + Z.x * z, y: o.y + X.y * x + Y.y * y + Z.y * z, z: o.z + X.z * x + Y.z * y + Z.z * z });
+    const D3 = (x, y, z) => v3.norm({ x: X.x * x + Y.x * y + Z.x * z, y: X.y * x + Y.y * y + Z.y * z, z: X.z * x + Y.z * y + Z.z * z });
+    for (const pt of ORG.parts) { const base = MV.length / 10;
+      for (let k = 0; k < pt.P.length; k += 3) mvtx(L3(pt.P[k], pt.P[k + 1], pt.P[k + 2]), D3(pt.N[k], pt.N[k + 1], pt.N[k + 2]), pt.col, pt.em);
+      for (let k = 0; k < pt.I.length; k++) MI.push(base + pt.I[k]); }
+    const sc = ORG.screen; SV = new Float32Array(sc.P.length / 3 * 5);
+    for (let k = 0, v = 0; k < sc.P.length; k += 3, v++) { const w = toWorld(L3(sc.P[k], sc.P[k + 1], sc.P[k + 2]));
+      SV.set([w.x, w.y, w.z, sc.UV[v * 2], sc.UV[v * 2 + 1]], v * 5); }
+  } else SV = null;
   // play-space metres -> galaxy units
   for (let i = 0; i < MV.length; i += 10) { const p = toWorld({ x: MV[i], y: MV[i + 1], z: MV[i + 2] }), n = dirToWorld({ x: MV[i + 3], y: MV[i + 4], z: MV[i + 5] });
     MV[i] = p.x; MV[i + 1] = p.y; MV[i + 2] = p.z; MV[i + 3] = n.x; MV[i + 4] = n.y; MV[i + 5] = n.z; }
   return MI.length;
+}
+
+// ================= the body: a rigged human model (assets/body.glb), arms follow your controllers =================
+const BODY = { ok: false, ready: false, bones: new Float32Array(24 * 16), arm: {} };
+const Q = { // quaternion helpers, {x,y,z,w}
+  mul: (a, b) => ({ x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x, z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z }),
+  fromTo(a, b) { const d = v3.dot(a, b); if (d < -0.9999) { const ax = v3.norm(cross(Math.abs(a.x) < 0.9 ? { x: 1, y: 0, z: 0 } : { x: 0, y: 1, z: 0 }, a)); return { ...ax, w: 0 }; }
+    const c = cross(a, b), w = 1 + d, l = Math.hypot(c.x, c.y, c.z, w); return { x: c.x / l, y: c.y / l, z: c.z / l, w: w / l }; },
+  mat(q) { const { x, y, z, w } = q; return new Float32Array([1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w), 0, 2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w), 0, 2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y), 0, 0, 0, 0, 1]); },
+};
+const mTRS = (t, r, s) => { const m = Q.mat(r || { x: 0, y: 0, z: 0, w: 1 }), sc = s || [1, 1, 1]; for (let i = 0; i < 3; i++) for (let k = 0; k < 3; k++) m[i * 4 + k] *= sc[i]; if (t) { m[12] = t[0]; m[13] = t[1]; m[14] = t[2]; } return m; };
+const mPos = (m) => ({ x: m[12], y: m[13], z: m[14] });
+const mTr = (p) => { const m = new Float32Array(16); m[0] = m[5] = m[10] = m[15] = 1; m[12] = p.x; m[13] = p.y; m[14] = p.z; return m; };
+const rotAbout = (p, q, m) => M4.mul(mTr(p), M4.mul(Q.mat(q), M4.mul(mTr(v3.mul(p, -1)), m)));
+async function parseGLB(url) {
+  const buf = await (await fetch(url)).arrayBuffer(), dv = new DataView(buf);
+  if (dv.getUint32(0, true) !== 0x46546C67) throw new Error('not a glb');
+  const jl = dv.getUint32(12, true), J = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl))), b0 = 20 + jl + 8;
+  const acc = (i) => { const a = J.accessors[i], bv = J.bufferViews[a.bufferView], n = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 }[a.type];
+    const T = { 5126: Float32Array, 5123: Uint16Array, 5125: Uint32Array, 5121: Uint8Array }[a.componentType], off = b0 + (bv.byteOffset || 0) + (a.byteOffset || 0);
+    return new T(buf.slice(off, off + a.count * n * T.BYTES_PER_ELEMENT)); };
+  return { J, acc };
+}
+async function loadBody() {
+  try {
+    const { J, acc } = await parseGLB('/assets/body.glb'), skin = J.skins[0], prim = J.meshes[0].primitives[0];
+    const parent = []; J.nodes.forEach((n, i) => (n.children || []).forEach((c) => { parent[c] = i; }));
+    const local = J.nodes.map((n) => mTRS(n.translation, n.rotation && { x: n.rotation[0], y: n.rotation[1], z: n.rotation[2], w: n.rotation[3] }, n.scale));
+    const world = []; const W = (i) => world[i] || (world[i] = parent[i] == null ? local[i] : M4.mul(W(parent[i]), local[i]));
+    BODY.joints = skin.joints; BODY.rest = skin.joints.map((n) => W(n)); BODY.ibm = acc(skin.inverseBindMatrices);
+    BODY.ji = {}; skin.joints.forEach((n, k) => { BODY.ji[J.nodes[n].name] = k; });
+    const head = mPos(BODY.rest[BODY.ji.Head]); BODY.eye = { x: head.x, y: head.y + 0.07, z: head.z + 0.07 };
+    const P = acc(prim.attributes.POSITION), N = acc(prim.attributes.NORMAL), JT = acc(prim.attributes.JOINTS_0), WT = acc(prim.attributes.WEIGHTS_0), I = acc(prim.indices);
+    const va = gl.createVertexArray(); gl.bindVertexArray(va);
+    const attr = (name, data, size, type, norm) => { const l = P_B.a(name); if (l < 0) return; const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, size, type, norm, 0, 0); };
+    attr('aPos', P, 3, gl.FLOAT, false); attr('aN', N, 3, gl.FLOAT, false); attr('aJ', JT, 4, gl.UNSIGNED_BYTE, false); attr('aW', WT, 4, gl.UNSIGNED_BYTE, true);
+    const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, I, gl.STATIC_DRAW); gl.bindVertexArray(null);
+    BODY.va = va; BODY.n = I.length; BODY.itype = I instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT; BODY.ok = true; ORG.OUT = 0.022;
+  } catch (e) { console.warn('body model not loaded, using the built-in suit', e); }
+}
+// pose the body for this frame (play-space metres): stand under your head, face where your body faces, reach for the controllers
+function poseBody() {
+  if (!BODY.ok || !suit || !suit.head) return (BODY.ready = false);
+  const H = suit.head, k = clamp((H.y - suit.floorY) / BODY.eye.y, 0.8, 1.25), a = suit.yaw + Math.PI;
+  const F = { x: -Math.sin(suit.yaw), y: 0, z: -Math.cos(suit.yaw) }, R = { x: Math.cos(suit.yaw), y: 0, z: -Math.sin(suit.yaw) };
+  const rq = { x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) }, e = quatRot(rq, v3.mul(BODY.eye, k));
+  const T = mTRS([H.x - e.x - F.x * 0.03, H.y - e.y, H.z - e.z - F.z * 0.03], rq, [k, k, k]);
+  const Wm = BODY.rest.map((m) => M4.mul(T, m));
+  for (const [side, up, fo, ha] of [[-1, 'LeftArm', 'LeftForeArm', 'LeftHand'], [1, 'RightArm', 'RightForeArm', 'RightHand']]) {
+    const iu = BODY.ji[up], iF = BODY.ji[fo], ih = BODY.ji[ha]; if (iu == null || iF == null || ih == null) continue;
+    const S = mPos(Wm[iu]), Er = mPos(Wm[iF]), Hr = mPos(Wm[ih]), L1 = v3.len(v3.sub(Er, S)), L2 = v3.len(v3.sub(Hr, Er));
+    const g = suit.grips[side < 0 ? 'left' : 'right'];
+    let tgt = g ? v3.add(g.pos, quatRot(g.ori, { x: 0, y: 0, z: 0.06 })) : v3.add(S, v3.add(v3.mul(R, side * 0.06), v3.add({ x: 0, y: -(L1 + L2) * 0.97, z: 0 }, v3.mul(F, 0.12))));
+    let d = v3.sub(tgt, S); const dist = clamp(v3.len(d), Math.abs(L1 - L2) + 0.01, L1 + L2 - 0.002); d = v3.norm(d); tgt = v3.add(S, v3.mul(d, dist));
+    let pole = v3.add(v3.add({ x: 0, y: -1, z: 0 }, v3.mul(R, side * 0.5)), v3.mul(F, -0.4));
+    if (g) { // bend the elbow so the forearm lines up with the controller, like the real arm holding it
+      const Ed = v3.sub(tgt, v3.mul(quatRot(g.ori, { x: 0, y: 0, z: -1 }), L2)); const pe = v3.sub(Ed, S);
+      if (v3.len(v3.sub(pe, v3.mul(d, v3.dot(d, pe)))) > 0.02) pole = pe; }
+    pole = v3.norm(v3.sub(pole, v3.mul(d, v3.dot(d, pole))));
+    const ca = (L1 * L1 + dist * dist - L2 * L2) / (2 * dist), E = v3.add(S, v3.add(v3.mul(d, ca), v3.mul(pole, Math.sqrt(Math.max(0, L1 * L1 - ca * ca)))));
+    const q1 = Q.fromTo(v3.norm(v3.sub(Er, S)), v3.norm(v3.sub(E, S)));
+    Wm[iu] = rotAbout(S, q1, Wm[iu]); const f1 = rotAbout(S, q1, Wm[iF]), h1 = rotAbout(S, q1, Wm[ih]);
+    const q2 = Q.fromTo(v3.norm(v3.sub(mPos(h1), mPos(f1))), v3.norm(v3.sub(tgt, E)));
+    Wm[iF] = rotAbout(E, q2, f1); Wm[ih] = rotAbout(E, q2, h1);
+    BODY.arm[side < 0 ? 'left' : 'right'] = { E, H: tgt };
+  }
+  for (let j = 0; j < Wm.length && j < 24; j++) BODY.bones.set(M4.mul(Wm[j], BODY.ibm.subarray(j * 16, j * 16 + 16)), j * 16);
+  BODY.ready = true;
 }
 
 // ================= WebGL =================
@@ -551,6 +754,19 @@ void main() { vec3 N = normalize(vN), V = normalize(uHead - vW), L = normalize(-
   float diff = max(dot(N, L), 0.0), top = max(N.y, 0.0), rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
   vec3 c = vCol * (0.16 + 0.62 * diff + 0.28 * top) + uAcc * rim * 0.3 + vCol * vEm * 1.4;
   o = vec4(c, 1.0); }`;
+const VS_S = `#version 300 es
+in vec3 aPos; in vec2 aUV; uniform mat4 uPV, uM; out vec2 vUV; void main() { vUV = aUV; gl_Position = uPV * uM * vec4(aPos, 1.0); }`;
+const FS_S = `#version 300 es
+precision mediump float; uniform sampler2D uTex; in vec2 vUV; out vec4 o; void main() { o = vec4(texture(uTex, vUV).rgb * 1.15, 1.0); }`;
+const VS_B = `#version 300 es
+in vec3 aPos; in vec3 aN; in vec4 aJ; in vec4 aW; uniform mat4 uPV; uniform mat4 uB[24]; out vec3 vP, vN;
+void main() { mat4 S = aW.x * uB[int(aJ.x)] + aW.y * uB[int(aJ.y)] + aW.z * uB[int(aJ.z)] + aW.w * uB[int(aJ.w)];
+  vec4 p = S * vec4(aPos, 1.0); vP = p.xyz; vN = mat3(S) * aN; gl_Position = uPV * p; }`;
+const FS_B = `#version 300 es
+precision highp float; uniform vec3 uCol, uAcc, uCore, uEye; in vec3 vP, vN; out vec4 o;
+void main() { vec3 N = normalize(vN), V = normalize(uEye - vP), L = normalize(uCore - vP); if (dot(N, V) < 0.0) N = -N;
+  float diff = max(dot(N, L), 0.0), top = max(N.y, 0.0), rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+  o = vec4(uCol * (0.2 + 0.6 * diff + 0.3 * top) + uAcc * rim * 0.45, 1.0); }`;
 function prog(vs, fs) {
   const p = gl.createProgram();
   for (const [t, s] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) { const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh);
@@ -560,7 +776,7 @@ function prog(vs, fs) {
   for (let i = 0; i < n; i++) { const name = gl.getActiveUniform(p, i).name; u[name] = gl.getUniformLocation(p, name); }
   return { p, u, a: (name) => gl.getAttribLocation(p, name) };
 }
-let P_M, nSuit = 0, P_PTS, P_LN, P_Q, MAXPT = 256, atlasTex, glowTex;
+let P_B, P_S, P_M, nSuit = 0, P_PTS, P_LN, P_Q, MAXPT = 256, atlasTex, glowTex;
 const VB = {};
 function texFrom(canvas, tex) {
   tex = tex || gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -579,8 +795,10 @@ function initGL() {
   P_PTS = prog(VS_PTS, FS_PTS); P_LN = prog(VS_LN, FS_LN); P_Q = prog(VS_Q, FS_Q);
   MAXPT = Math.min(256, gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]);
   VB.stars = vao(P_PTS, PT_LAYOUT, 36); VB.pts = vao(P_PTS, PT_LAYOUT, 36);
-  VB.ln = vao(P_LN, [['aPos', 3, 0], ['aCol', 4, 12]], 28);
+  VB.ln = vao(P_LN, [['aPos', 3, 0], ['aCol', 4, 12]], 28); VB.tri = vao(P_LN, [['aPos', 3, 0], ['aCol', 4, 12]], 28);
   VB.q = vao(P_Q, [['aC', 2, 0]], 8);
+  P_S = prog(VS_S, FS_S); VB.s = vao(P_S, [['aPos', 3, 0], ['aUV', 2, 12]], 20); VB.si = gl.createBuffer(); gl.bindVertexArray(VB.s.va); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, VB.si); gl.bindVertexArray(null);
+  P_B = prog(VS_B, FS_B);
   P_M = prog(VS_M, FS_M); VB.m = vao(P_M, [['aPos', 3, 0], ['aN', 3, 12], ['aCol', 3, 24], ['aEm', 1, 36]], 40); VB.mi = gl.createBuffer();
   gl.bindVertexArray(VB.m.va); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, VB.mi); gl.bindVertexArray(null);
   gl.bindBuffer(gl.ARRAY_BUFFER, VB.q.buf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), gl.STATIC_DRAW);
@@ -637,7 +855,8 @@ function labelPanel(key, text, color, px) {
 }
 
 // ---------- per-frame geometry ----------
-let ptsArr = new Float32Array(9 * 6000), lnArr = new Float32Array(7 * 4000);
+let ptsArr = new Float32Array(9 * 6000), lnArr = new Float32Array(7 * 4000), triArr = new Float32Array(7 * 60), nt = 0;
+function tri(a, b, c, ca, cb, cc) { if (nt > 57) return; [[a, ca], [b, cb], [c, cc]].forEach(([p, col]) => { triArr.set([p.x, p.y, p.z, ...col], nt * 7); nt++; }); }
 let np = 0, nl = 0;
 function pt(x, y, z, s, r, g, b, a, c) { if (np >= 6000) return; ptsArr.set([x, y, z, s, r, g, b, a, c], np * 9); np++; }
 function ln(a, b, ca, cb) { if (nl >= 3998) return; lnArr.set([a.x, a.y, a.z, ...ca], nl * 7); lnArr.set([b.x, b.y, b.z, ...(cb || ca)], nl * 7 + 7); nl += 2; }
@@ -673,6 +892,13 @@ function buildGeometry(now, head) {
   for (let i = links.length - 1; i >= 0; i--) { const l = links[i], age = (now - l.born) / 1000; if (age > 14) { links.splice(i, 1); continue; }
     const k = 1 - age / 14, col = l.cancel ? [1, 0.35, 0.35, 0.6 * k] : l.done ? [0.36, 0.95, 0.65, 0.9 * k] : [1, 0.71, 0.15, 0.7 * k];
     ln(l.a, l.b, col); }
+  nt = 0;
+  if (SP.open && SP.arm && SP.edge && WM.c && !SP.pinned) { // light cone from the emitter up to the hologram
+    const e0 = v3.sub(SP.edge, v3.mul(WM.r, WM.W / 2)), e1 = v3.add(SP.edge, v3.mul(WM.r, WM.W / 2)); // the organizer's corners
+    const bl = v3.add(SP.c, v3.add(v3.mul(SP.r, -SP.W / 2), v3.mul(SP.u, -SP.H / 2))), br = v3.add(SP.c, v3.add(v3.mul(SP.r, SP.W / 2), v3.mul(SP.u, -SP.H / 2)));
+    const lo = [0.35, 0.85, 1, 0.4], hi = [0.35, 0.85, 1, 0.08];
+    tri(e0, e1, br, lo, lo, hi); tri(e0, br, bl, lo, hi, hi);
+    for (const [a, b] of [[e0, bl], [e1, br]]) ln(a, b, [0.6, 0.95, 1, 0.95], [0.6, 0.95, 1, 0.5]); }
   // controller rays
   for (const r of rays) { const len = r.hit ? r.hit.t : 2400, end = v3.add(r.o, v3.mul(r.d, len));
     ln(r.o, end, r.hit ? [1, 0.71, 0.15, 0.9] : [0.8, 0.88, 1, 0.5], r.hit ? [1, 0.71, 0.15, 0.9] : [0.8, 0.88, 1, 0]);
@@ -694,16 +920,25 @@ function drawView(PV, M, px, head, now) {
   gl.bindVertexArray(VB.pts.va); gl.drawArrays(gl.POINTS, 0, np);
   gl.useProgram(P_LN.p); gl.uniformMatrix4fv(P_LN.u.uPV, false, PV); gl.uniformMatrix4fv(P_LN.u.uM, false, M);
   gl.bindVertexArray(VB.ln.va); gl.drawArrays(gl.LINES, 0, nl);
+  if (nt) { gl.bindVertexArray(VB.tri.va); gl.drawArrays(gl.TRIANGLES, 0, nt); }
   // your suit: solid, lit by the core
+  if (xrSession && BODY.ready) { gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
+    const core = { x: M[12], y: M[13], z: M[14] }, sk = SKINS[skinI]; // the galaxy core, in play space
+    gl.useProgram(P_B.p); gl.uniformMatrix4fv(P_B.u['uPV'], false, PV); gl.uniformMatrix4fv(P_B.u['uB[0]'], false, BODY.bones);
+    gl.uniform3fv(P_B.u.uCol, sk.base.map((v) => v * 1.25 + 0.05)); gl.uniform3fv(P_B.u.uAcc, sk.acc); gl.uniform3f(P_B.u.uCore, core.x, core.y, core.z); gl.uniform3f(P_B.u.uEye, headRef.x, headRef.y, headRef.z);
+    gl.bindVertexArray(BODY.va); gl.drawElements(gl.TRIANGLES, BODY.n, BODY.itype, 0); gl.depthMask(false); }
   if (xrSession && nSuit) { gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
     gl.useProgram(P_M.p); gl.uniformMatrix4fv(P_M.u.uPV, false, PV); gl.uniformMatrix4fv(P_M.u.uM, false, M);
     gl.uniform3f(P_M.u.uHead, head.x, head.y, head.z); gl.uniform3fv(P_M.u.uAcc, SKINS[skinI].acc);
-    gl.bindVertexArray(VB.m.va); gl.drawElements(gl.TRIANGLES, nSuit, gl.UNSIGNED_INT, 0); gl.depthMask(false); gl.enable(gl.BLEND); } // text behind your body stays hidden
+    gl.bindVertexArray(VB.m.va); gl.drawElements(gl.TRIANGLES, nSuit, gl.UNSIGNED_INT, 0);
+    if (SV && WM.tex) { gl.useProgram(P_S.p); gl.uniformMatrix4fv(P_S.u.uPV, false, PV); gl.uniformMatrix4fv(P_S.u.uM, false, M); // live organizer screen
+      gl.bindTexture(gl.TEXTURE_2D, WM.tex); gl.uniform1i(P_S.u.uTex, 0); gl.bindVertexArray(VB.s.va); gl.drawElements(gl.TRIANGLES, ORG.screen.I.length, gl.UNSIGNED_INT, 0); }
+    gl.depthMask(false); gl.enable(gl.BLEND); } // text behind your body stays hidden
   // text: labels, bubbles, the card
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   gl.useProgram(P_Q.p); gl.bindVertexArray(VB.q.va);
   for (const [p, c, h, a] of panelsToDraw) { gl.bindTexture(gl.TEXTURE_2D, p.tex); quad(c, h * p.aspect, h, [1, 1, 1, a], head); }
-  for (const P of [WM.on && WM, SP.open && SP]) { if (!P || !P.tex || !P.c) continue; gl.bindTexture(gl.TEXTURE_2D, P.tex);
+  for (const P of [WM.on && !(ORG.ok && SV) && WM, SP.open && SP]) { if (!P || !P.tex || !P.c) continue; gl.bindTexture(gl.TEXTURE_2D, P.tex);
     gl.uniform3f(P_Q.u.uCen, P.c.x, P.c.y, P.c.z); gl.uniform3f(P_Q.u.uR, P.r.x * P.W, P.r.y * P.W, P.r.z * P.W); gl.uniform3f(P_Q.u.uU, P.u.x * P.H, P.u.y * P.H, P.u.z * P.H);
     gl.uniform4f(P_Q.u.uTint, 1, 1, 1, 1); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
   gl.bindVertexArray(null); gl.disable(gl.DEPTH_TEST); gl.depthMask(true);
@@ -717,7 +952,9 @@ function quad(c, w, h, tint, head) { // billboard facing the head, upright
 let panelsToDraw = [];
 function buildPanels(now, head) {
   panelsToDraw = [];
-  for (const f of fields.values()) { const p = labelPanel('f:' + f.slug, '#' + f.slug, `hsl(${f.hue},90%,75%)`, 56); panelsToDraw.push([p, { x: f.x, y: f.y + SR * 1.3, z: f.z }, 30, 0.95]); }
+  for (const f of fields.values()) { const n = [...bees.values()].filter((b) => active(b) && b.field === f.slug).length, key = 'f:' + f.slug, txt = '#' + f.slug + '|' + n;
+    let p = labelPanels.get(key); if (!p || p.text !== txt) { freePanel(p); p = makePanel([[`700 64px ${SANS}`, `hsl(${f.hue},90%,78%)`, '#' + f.slug], [`36px ${SANS}`, '#e8f4ff', n + ' active']], { bg: false, pad: 8, center: true }); p.text = txt; labelPanels.set(key, p); }
+    panelsToDraw.push([p, { x: f.x, y: f.y + SR * 1.45, z: f.z }, 46, 0.95]); }
   // names of the nearest bees
   const near = [...bees.values()].filter(active).map((b) => [b, v3.len(v3.sub(b, head))]).filter(([, d]) => d < 1300).sort((a, b) => a[1] - b[1]).slice(0, 24);
   for (const [b, d] of near) { const p = labelPanel('b:' + b.id, (b.house ? '⌂ ' : '') + b.name, b.house ? 'rgba(200,210,225,.9)' : `hsl(${b.hue},90%,75%)`, 40);
@@ -753,6 +990,7 @@ function update(dt, now) {
 function upload() {
   gl.bindBuffer(gl.ARRAY_BUFFER, VB.pts.buf); gl.bufferData(gl.ARRAY_BUFFER, ptsArr.subarray(0, np * 9), gl.DYNAMIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, VB.ln.buf); gl.bufferData(gl.ARRAY_BUFFER, lnArr.subarray(0, nl * 7), gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, VB.tri.buf); gl.bufferData(gl.ARRAY_BUFFER, triArr.subarray(0, nt * 7), gl.DYNAMIC_DRAW);
 }
 const M4 = {
   mul(a, b) { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s; } return o; },
@@ -829,7 +1067,7 @@ function pickScreen(x, y) {
 // ================= WebXR =================
 let xrSession = null, xrRef = null, xrLast = 0;
 const vrb = document.getElementById('vrb');
-let vel = { x: 0, y: 0, z: 0 }; const btnPrev = new Map();
+let vel = { x: 0, y: 0, z: 0 }; const btnPrev = new Map(), poke = new Map();
 async function checkVR() {
   let ok = false; try { ok = !!navigator.xr && await navigator.xr.isSessionSupported('immersive-vr'); } catch {}
   vrb.classList.toggle('off', !ok); vrb.dataset.ok = ok ? '1' : '';
@@ -894,29 +1132,53 @@ function xrFrame(t, frame) {
   // body and wrist panel follow your real hands
   const grips = {};
   for (const src of s.inputSources) if (src.gripSpace && src.targetRayMode === 'tracked-pointer') { const gp = frame.getPose(src.gripSpace, xrRef);
-    if (gp) grips[src.handedness] = { pos: { ...gp.transform.position }, ori: gp.transform.orientation }; }
+    if (gp) { const t0 = src.gamepad && src.gamepad.buttons && src.gamepad.buttons[0]; // finger off the trigger = index finger points
+      grips[src.handedness] = { pos: { ...gp.transform.position }, ori: gp.transform.orientation, point: !!(t0 && !t0.touched && !t0.pressed), src }; } }
   const hy = Math.atan2(-fw.x, -fw.z) - rig.th; if (!suit) suit = { yaw: hy, floorY: headRef.y - 1.65 };
   let dyw = hy - suit.yaw; dyw = Math.atan2(Math.sin(dyw), Math.cos(dyw)); suit.yaw += dyw * (Math.abs(dyw) > 0.9 ? 0.2 : 0.04);
   suit.head = headRef; suit.grips = grips; lookFwd = fw;
+  poseBody();
   const L = grips.left; WM.on = !!L;
-  if (L) { // the organizer lies along the gauntlet and rolls around it to face your eyes, like a screen strapped to the forearm
-    const ax = quatRot(L.ori, { x: 0, y: 0, z: -1 }); let c = v3.add(L.pos, v3.mul(ax, -0.15));
-    let toEye = v3.sub(headRef, c); toEye = v3.sub(toEye, v3.mul(ax, v3.dot(toEye, ax)));
-    if (v3.len(toEye) > 0.02) { const n = v3.norm(toEye); c = v3.add(c, v3.mul(n, 0.068));
-      const viewR = quatRot(ori, { x: 1, y: 0, z: 0 }), ra = v3.dot(ax, viewR) >= 0 ? ax : v3.mul(ax, -1), u = cross(n, ra);
-      WM.c = toWorld(c); WM.n = v3.norm(dirToWorld(n)); WM.r = v3.norm(dirToWorld(ra)); WM.u = v3.norm(dirToWorld(u)); } }
-  if (SP.open && SP.arm) { if (WM.on && WM.c) { SP.c = v3.add(v3.add(WM.c, v3.mul(WM.u, WM.H / 2 + SP.H / 2 + 0.02 * WS)), v3.mul(WM.n, 0.02 * WS)); SP.n = WM.n; SP.r = WM.r; SP.u = WM.u; } else closeSearch(); }
-  let wmHov = null;
+  if (L) { // the organizer is strapped along the left forearm (+Y to the elbow) and rolls around it so its screen faces your eyes
+    const LA = BODY.ready && BODY.arm.left, ax = LA ? v3.norm(v3.sub(LA.H, LA.E)) : quatRot(L.ori, { x: 0, y: 0, z: -1 });
+    const c0 = LA ? v3.add(LA.E, v3.mul(v3.sub(LA.H, LA.E), 0.55)) : v3.add(L.pos, v3.mul(ax, -0.14));
+    let toEye = v3.sub(headRef, c0); toEye = v3.sub(toEye, v3.mul(ax, v3.dot(toEye, ax)));
+    if (v3.len(toEye) > 0.02) { const Z = v3.norm(toEye), Y = v3.mul(ax, -1), X = cross(Y, Z), o = v3.add(c0, v3.mul(Z, ORG.OUT));
+      ORG.F = { o, X, Y, Z };
+      const viewR = quatRot(ori, { x: 1, y: 0, z: 0 }), flip = v3.dot(Y, viewR) > 0; // wrist to the right -> no flip
+      const r = flip ? Y : v3.mul(Y, -1), u = cross(Z, r); if (flip !== WM.flip) { WM.flip = flip; WM.dirty = true; }
+      WM.c = toWorld(v3.add(o, v3.mul(Z, 0.047))); WM.n = v3.norm(dirToWorld(Z)); WM.r = v3.norm(dirToWorld(r)); WM.u = v3.norm(dirToWorld(u)); } }
+  else ORG.F = null;
+  if (SP.open && SP.arm && !SP.pinned) { if (WM.on && WM.c) { // hologram fixed to the organizer: its bottom corners sit over the organizer's corners
+      const r = WM.r, upH = v3.norm(v3.add(WM.u, v3.mul(WM.n, 0.45))); // rises from the far edge, tilted toward your eyes
+      const edge = v3.add(WM.c, v3.mul(WM.u, WM.H / 2)), base = v3.add(edge, v3.mul(upH, 0.05 * WS));
+      SP.W = WM.W; SP.H = SP.W * SP.cv.height / SP.cv.width;
+      SP.c = v3.add(base, v3.mul(upH, SP.H / 2)); SP.r = r; SP.u = upH; SP.n = v3.norm(cross(r, upH)); SP.edge = edge; } else closeSearch(); }
+  // poke: the right index fingertip presses buttons on the forearm organizer and the keyboard, with a little buzz
+  let wmHov = null; const Rg = grips.right, fingerNear = { v: false };
+  if (Rg) { Rg.tip = v3.add(Rg.pos, quatRot(Rg.ori, { x: 0, y: -0.015, z: -0.1 })); const tipW = toWorld(Rg.tip);
+    for (const P of [WM.on && WM.c && WM, SP.open && SP.arm && SP]) { if (!P) continue;
+      const d = v3.dot(v3.sub(tipW, P.c), P.n), o = v3.add(tipW, v3.mul(P.n, 0.05 * WS)), dn = v3.mul(P.n, -1);
+      const h = P === WM ? wmHit(o, dn) : panelHit(o, dn); if (!h) { poke.set(P, 1e9); continue; }
+      if (d < 0.06 * WS) { fingerNear.v = true; if (P === WM) wmHov = h.wm; else setHover(h); }
+      const was = poke.get(P) ?? 1e9;
+      if (d < 0.01 * WS && was >= 0.01 * WS) { if (P === WM) { if (h.wm) wmPress(h.wm); } else panelPress(h);
+        const act = Rg.src.gamepad && Rg.src.gamepad.hapticActuators && Rg.src.gamepad.hapticActuators[0]; if (act && act.pulse) act.pulse(0.5, 25); }
+      poke.set(P, d); } }
+  if (Rg) Rg.point = Rg.point || fingerNear.v;
   for (const src of s.inputSources) { if (src.targetRayMode === 'gaze' || src.targetRayMode === 'transient-pointer') continue;
     const rp = frame.getPose(src.targetRaySpace, xrRef); if (!rp) continue; const r = rayOf(rp);
     const wh = src.handedness !== 'left' ? wmHit(r.o, r.d) : null, ph = panelHit(r.o, r.d);
-    r.hit = wh || ph || (SP.open ? null : pickRay(r.o, r.d)); if (wh) wmHov = wh.wm; if (ph && !wh) setHover(ph); rays.push(r); }
+    r.hit = wh || ph || (SP.open ? null : pickRay(r.o, r.d)); if (wh && !wmHov) wmHov = wh.wm; if (ph && !wh) setHover(ph); rays.push(r); }
   if (SP.open && !rays.some((r) => r.hit && r.hit.panel && !r.hit.wm)) setHover(null);
   if (wmHov !== WM.hover) { WM.hover = wmHov; WM.dirty = true; }
   buildGeometry(now, head); buildPanels(now, head); upload();
   nSuit = buildSuit();
   if (nSuit) { gl.bindVertexArray(VB.m.va); gl.bindBuffer(gl.ARRAY_BUFFER, VB.m.buf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(MV), gl.DYNAMIC_DRAW);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, VB.mi); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(MI), gl.DYNAMIC_DRAW); gl.bindVertexArray(null); }
+  if (SV) { gl.bindVertexArray(VB.s.va); gl.bindBuffer(gl.ARRAY_BUFFER, VB.s.buf); gl.bufferData(gl.ARRAY_BUFFER, SV, gl.DYNAMIC_DRAW);
+    if (!ORG.idxUp) { gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, VB.si); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(ORG.screen.I), gl.STATIC_DRAW); ORG.idxUp = true; }
+    gl.bindVertexArray(null); }
   const layer = s.renderState.baseLayer; gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
   gl.clearColor(0.012, 0.02, 0.04, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   const M = modelMat();
@@ -926,7 +1188,7 @@ function xrFrame(t, frame) {
 
 // ================= go =================
 if (gl) {
-  initGL(); checkVR(); navigator.xr && navigator.xr.addEventListener && navigator.xr.addEventListener('devicechange', checkVR);
+  initGL(); loadOrganizer(); loadBody(); checkVR(); navigator.xr && navigator.xr.addEventListener && navigator.xr.addEventListener('devicechange', checkVR);
   requestAnimationFrame(desktopFrame); start();
   setTimeout(() => { if (!selected) document.getElementById('hint').style.opacity = 0; }, 12000);
 }
