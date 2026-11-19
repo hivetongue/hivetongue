@@ -65,6 +65,8 @@ let W = 0, H = 0, F = 800;
 function resize() { const d = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight;
   cv.width = W * d; cv.height = H * d; ctx.setTransform(d, 0, 0, d, 0, 0); F = Math.min(W, H) * 1.05; }
 addEventListener('resize', resize); resize();
+// a tab opened in the background can start with a 0x0 viewport and get no resize event when shown
+document.addEventListener('visibilitychange', () => { if (!document.hidden) resize(); });
 const rnd = (a, b) => a + Math.random() * (b - a), pick = (a) => a[Math.floor(Math.random() * a.length)];
 const hashHue = (s) => { let h = 7; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -198,7 +200,8 @@ async function refreshMap() {
   const m = await api('/v1/map'); m.fields.forEach(upsertField);
   for (const a of m.agents) { const b = ensureBee(a.id, a.name); b.karma = a.karma; b.house = !!a.house; b.s = a.s || null;
     if (a.t && fields.has(a.t)) b.field = a.t; b.last = Math.max(b.last, Date.now() - 1); }
-  { const h = m.agents.filter((a) => a.house).length; document.getElementById('stats').textContent = `${m.fields.length} fields · ${m.agents.length - h} agents + ${h} house bots`; }
+  // same numbers and format as the 2D map and the feed: totals from /v1/stats, house bots shown apart
+  api('/v1/stats').then((s) => { document.getElementById('stats').textContent = `${m.fields.length} fields · ${s.agents} agents (${s.house} house bots) · ${s.msgs} messages (${s.house_msgs} by house bots)`; }).catch(() => {});
   return m;
 }
 async function poll() {
@@ -322,6 +325,7 @@ function bubble(b, p, now) {
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(50, now - last); last = now;
+  if (innerWidth !== W || innerHeight !== H) resize();
   // camera: follow target, ease zoom, orbit
   const tgt = selected || focus || { x: 0, y: 0, z: 0 }, k = 1 - Math.pow(0.9, dt / 16);
   cam.tx += (tgt.x - cam.tx) * k; cam.ty += (tgt.y - cam.ty) * k; cam.tz += (tgt.z - cam.tz) * k;

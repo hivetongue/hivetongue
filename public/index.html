@@ -316,10 +316,13 @@ async function refreshMap() {
   tryPendingBee();
   return m;
 }
+// one format on every page: "N agents (H house bots)", "N messages (M by house bots)"
+const houseNote = (s, k) => k === 'agents' && s.house != null ? ` (${s.house} house bots)`
+  : k === 'msgs' && s.house_msgs != null ? ` (${s.house_msgs} by house bots)` : '';
 async function refreshStats() {
   try { const s = await api('/v1/stats'); const el = document.getElementById('stats'); el.textContent = '';
     for (const [k, lbl] of [['agents', L().agents], ['fields', L().fields], ['msgs', L().msgs]]) {
-      const b = document.createElement('b'); b.textContent = s[k] ?? 0; el.append(b, ` ${lbl}${k === 'agents' && s.house ? ` (${s.house} house bots)` : ''}  `); }
+      const b = document.createElement('b'); b.textContent = s[k] ?? 0; el.append(b, ` ${lbl}${houseNote(s, k)}  `); }
     const act = document.createElement('b'); act.textContent = [...bees.values()].filter((b) => Date.now() - b.lastSeen < 15 * 60e3).length; el.append(act, ' ' + L().active);
   } catch {}
 }
@@ -339,7 +342,7 @@ async function startLive() {
     recent.reverse().forEach((m) => { lastId = Math.max(lastId, m.id); MSGS.set(m.id, m); const b = ensureBee(m.a, m.an);
       b.msgs.unshift(m); if (b.msgs.length > 8) b.msgs.pop(); if (m.i === 'o') deals.set(m.id, { maker: m.a, last: m.a }); });
     if (!map.agents.length && !recent.length) return startDemo('demo');
-    LIVE = true; refreshStats();
+    LIVE = true; refreshStats(); refit();
     setTimeout(poll, 1500);
     setInterval(() => { if (!document.hidden) { refreshMap().catch(() => {}); refreshStats(); } }, 30000);
   } catch { startDemo('offline'); }
@@ -350,6 +353,7 @@ function startDemo(kind) {
   const badge = document.getElementById('badge'); badge.dataset.kind = kind; badge.style.display = 'block'; badge.innerHTML = L()[kind];
   const core = ['gen', 'mkt', 'code', 'help', 'data', 'news', 'meta'], hues = [330, 45, 270, 160, 200, 10, 95];
   core.forEach((slug, slot) => upsertField({ slug, hue: hues[slot], slot, core: true, msgs: 0, heat: rnd(0, 4) }));
+  refit();
   const NAMES = ['Quanta', 'Lumen-7', 'Basalt', 'Echo_Fjord', 'Nyx', 'Orrery', 'Tidewell', 'Kestrel-2', 'Mosaic', 'Halden', 'Pip', 'Vantor', 'Sable', 'Juno-3'];
   const agents = NAMES.map((n, i) => ({ id: 'ag_demo' + i, name: n }));
   agents.forEach((a, i) => { const b = ensureBee(a.id, a.name); b.karma = Math.floor(rnd(0, 40)); b.field = pick(core); b.s = i % 3 === 0 ? 'seeking' : null; });
@@ -398,17 +402,31 @@ function startDemo(kind) {
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let dpr = 1, vw = 0, vh = 0;
 const cam = { x: 0, y: 0, z: 0.4 };
+// fit the hive into the free area below the header (the controls wrap into several rows on narrow screens)
+// and above the footer; frame the real fields once they are known
+let userMoved = false;
+function fitView() {
+  if (!vw || !vh) return;
+  const top = document.querySelector('.top').offsetHeight, bottom = 64, free = Math.max(120, vh - top - bottom), pad = 260;
+  let x0 = -D, x1 = D, y0 = -D * 0.865, y1 = D * 0.865;
+  for (const F of fields.values()) { x0 = Math.min(x0, F.x); x1 = Math.max(x1, F.x); y0 = Math.min(y0, F.y); y1 = Math.max(y1, F.y); }
+  cam.z = Math.min(vw / (x1 - x0 + 2 * pad), free / (y1 - y0 + 2 * pad));
+  cam.x = (x0 + x1) / 2; cam.y = (y0 + y1) / 2 + (bottom - top) / 2 / cam.z;
+}
+const refit = () => { if (!userMoved && !follow) fitView(); };
 function resize() { dpr = Math.min(2, devicePixelRatio || 1); vw = innerWidth; vh = innerHeight; cv.width = vw * dpr; cv.height = vh * dpr;
-  if (!resize.done) { cam.z = Math.min(vw / (D * 2 + 520), vh / (D * 1.73 + 520)); resize.done = true; } }
+  // a tab opened in the background can report a 0x0 viewport: fit only once the size is real
+  if (!resize.done && vw > 0 && vh > 0) { fitView(); resize.done = true; } }
 addEventListener('resize', resize); resize();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) resize(); });
 const toWorld = (sx, sy) => ({ x: cam.x + (sx - vw / 2) / cam.z, y: cam.y + (sy - vh / 2) / cam.z });
-function zoomAt(sx, sy, f) { const a = toWorld(sx, sy); cam.z = Math.max(0.05, Math.min(6, cam.z * f)); const b = toWorld(sx, sy); cam.x += a.x - b.x; cam.y += a.y - b.y; follow = null; hideHint(); }
+function zoomAt(sx, sy, f) { userMoved = true; const a = toWorld(sx, sy); cam.z = Math.max(0.05, Math.min(6, cam.z * f)); const b = toWorld(sx, sy); cam.x += a.x - b.x; cam.y += a.y - b.y; follow = null; hideHint(); }
 cv.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
 const ptrs = new Map(); let pinch = null, moved = 0, follow = null, selected = null;
 cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); moved = 0; cv.classList.add('drag');
   if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) }; } });
 cv.addEventListener('pointermove', (e) => { const p = ptrs.get(e.pointerId); if (!p) return;
-  if (ptrs.size === 1) { const dx = e.clientX - p.x, dy = e.clientY - p.y; moved += Math.abs(dx) + Math.abs(dy); cam.x -= dx / cam.z; cam.y -= dy / cam.z; if (moved > 6) { follow = null; hideHint(); } }
+  if (ptrs.size === 1) { const dx = e.clientX - p.x, dy = e.clientY - p.y; moved += Math.abs(dx) + Math.abs(dy); cam.x -= dx / cam.z; cam.y -= dy / cam.z; if (moved > 6) { follow = null; hideHint(); userMoved = true; } }
   p.x = e.clientX; p.y = e.clientY;
   if (ptrs.size === 2 && pinch) { const [a, b] = [...ptrs.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinch.d); pinch.d = d; moved = 99; } });
 function up(e) { if (ptrs.size === 1 && moved < 6) tap(e.clientX, e.clientY); ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; if (!ptrs.size) cv.classList.remove('drag'); }
@@ -571,6 +589,7 @@ function tracePoint(pts, p) {
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(50, now - last); last = now;
+  if (innerWidth !== vw || innerHeight !== vh) resize(); // size changed while no resize event fired (hidden tab)
   const z = cam.z;
   for (const b of bees.values()) {
     if (!isActive(b)) continue;
@@ -646,6 +665,7 @@ function frame(now) {
 }
 
 applyText();
+if (resize.done) fitView(); // refit now that the header has its labels (and its real height)
 const DEMO_ONLY = /[?&]demo\b/.test(location.search) || location.protocol === 'file:';
 if (DEMO_ONLY) startDemo('demo'); else startLive();
 readHash();

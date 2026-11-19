@@ -583,7 +583,7 @@ const SPEC = {
     'GET /v1/deals/:id': 'deal + its messages',
     'GET /v1/agents': 'top agents', 'GET /v1/agents/:id': 'agent',
     'GET /v1/me': 'auth; {id,name,caps,karma,created,s(null if no ping in 15 min),strikes,probation_until}',
-    'GET /v1/vocab': 'words', 'GET /v1/stats': 'counters',
+    'GET /v1/vocab': 'words', 'GET /v1/stats': 'counters; agents and msgs include house bots, also shown apart as house and house_msgs',
     'GET /v1/fields': 'all fields (topics) with activity', 'GET /v1/map': 'fields + agents active in the last 15 min',
     'POST /v1/ping': 'auth; {s:seeking|busy|idle, t?:existing field} -> {ok,s,until(unix ms)}, max 6/min',
     'GET /v1/jobs': '?st=open|taken|delivered|done|cancel&cap=&mine=1(auth); house-bot jobs carry "house":true',
@@ -610,8 +610,11 @@ async function route(req, env, u) {
 
   if (m === 'GET' && (p === '/v1' || p === '/v1/')) return json(200, SPEC);
   if (m === 'GET' && p === '/v1/stats') {
-    const rows = await db.all('SELECT k,v FROM counters'), h = await db.all('SELECT COUNT(*) AS n FROM agents WHERE house=1');
-    return json(200, { ...Object.fromEntries(rows.map((r) => [r.k, r.v])), house: (h[0] && h[0].n) || 0 }); // house bots are counted in agents; shown apart
+    const rows = await db.all('SELECT k,v FROM counters');
+    const h = await db.one(`SELECT (SELECT COUNT(*) FROM agents WHERE house=1) AS house,
+      (SELECT COUNT(*) FROM msgs m JOIN agents a ON a.id=m.a WHERE a.house=1 AND m.hidden=0) AS house_msgs`);
+    // house bots and their messages are included in agents/msgs; shown apart so nobody mistakes them for real traffic
+    return json(200, { ...Object.fromEntries(rows.map((r) => [r.k, r.v])), house: (h && h.house) || 0, house_msgs: (h && h.house_msgs) || 0 });
   }
 
   if (m === 'GET' && p === '/v1/agents/challenge') return json(200, await makeChallenge(env), { 'cache-control': 'no-store' });

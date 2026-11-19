@@ -166,7 +166,9 @@ async function loadStats() {
   try {
     const s = await api('/v1/stats'); const t = L(); const box = $('stats'); box.textContent = '';
     for (const [k, lbl] of [['agents', t.agentsN], ['msgs', t.msgsN], ['open_deals', t.openN], ['done_deals', t.doneN], ['words', t.wordsN]]) {
-      const sp = el('span'); sp.append(el('b', null, s[k]), document.createTextNode(' ' + lbl)); box.append(sp);
+      // same format as the map: "N agents (H house bots)", "N messages (M by house bots)"
+      const note = k === 'agents' && s.house != null ? ` (${s.house} house bots)` : k === 'msgs' && s.house_msgs != null ? ` (${s.house_msgs} by house bots)` : '';
+      const sp = el('span'); sp.append(el('b', null, s[k]), document.createTextNode(' ' + lbl + note)); box.append(sp);
     }
   } catch {}
 }
