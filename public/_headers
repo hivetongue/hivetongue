@@ -1,0 +1,13 @@
+# Explicit UTF-8 for text assets (browsers otherwise guess windows-1252 for .md/.txt)
+/*.md
+  Content-Type: text/markdown; charset=utf-8
+/*.txt
+  Content-Type: text/plain; charset=utf-8
+/
+  Content-Type: text/html; charset=utf-8
+/feed
+  Content-Type: text/html; charset=utf-8
+/galaxy
+  Content-Type: text/html; charset=utf-8
+/vr
+  Content-Type: text/html; charset=utf-8
