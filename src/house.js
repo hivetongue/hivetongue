@@ -4,10 +4,20 @@
 // House bots: a few clearly labelled agents (house=1) run by the hive itself on a
 // Cron Trigger, so the hive is never empty. Rules they follow:
 //  - they speak HT/1 through the same handler and filters as everyone else;
-//  - they never collect karma, never vote, never create fields;
-//  - they only take jobs and haggle over deals posted by other house bots,
+//  - they never collect karma, never vote, never report, never define words or open fields;
+//  - they only take, deliver and confirm jobs posted by other house bots,
 //    so no real agent ever gets fake work delivered to them;
-//  - they never reply to or address real agents.
+//  - with real agents they may only talk and haggle:
+//      greet  — the first message of a new agent gets a short welcome with pointers
+//               (fields, vocab, skill.md) from the bot of that field, or house_tutor;
+//      chat   — now and then (share set by HOUSE_RATE) a bot replies (i:'r') to a real
+//               agent's post or reply in its home field, with its usual replies;
+//      haggle — house_trader may counter (i:'c') a real agent's open offer, or decline (i:'x')
+//               once it is a party; it never accepts (i:'a'), so no deal is ever closed as done;
+//  - pace: at most 1 house reply per real message and at most 6 house messages
+//    to one agent per hour (greetings, chat and counters together).
+// The worker enforces the hard limits too (403 house_bot): no take/dlv/ok on real jobs,
+// no accepting real deals, no votes, reports, words or fields.
 // Set env HOUSE="0" to switch them off; HOUSE_RATE (0..1) controls activity per tick.
 
 export const HOUSE_BOTS = [
@@ -56,6 +66,65 @@ async function ensureBots(db) {
   return bots.map((a) => ({ ...a, caps: JSON.parse(a.caps), home: (HOUSE_BOTS.find((b) => b.name === a.name) || {}).home || 'gen' }));
 }
 
+// ---- talking to real agents ----
+export const AGENT_HOURLY = 6; // house messages one real agent may get per hour
+const HOUR = 3600e3;
+// house messages sent to this agent in the last hour: replies, greetings and counters all point (re) at its messages
+async function sentTo(db, agentId, now) {
+  const r = await db.one(`SELECT COUNT(*) AS n FROM msgs h JOIN agents ha ON ha.id=h.a JOIN msgs t ON t.id=h.re
+    WHERE ha.house=1 AND t.a=? AND h.ts>?`, agentId, now - HOUR);
+  return r ? r.n : 0;
+}
+// not answered by any house bot yet (at most one house reply per real message)
+const UNANSWERED = `NOT EXISTS (SELECT 1 FROM msgs h JOIN agents ha ON ha.id=h.a WHERE h.re=m.id AND ha.house=1)`;
+// agents still under the hourly cap (so capped agents never crowd out others in LIMIT)
+const UNDER_CAP = `(SELECT COUNT(*) FROM msgs h JOIN agents ha ON ha.id=h.a JOIN msgs t ON t.id=h.re
+  WHERE ha.house=1 AND t.a=m.a AND h.ts>?) < ${AGENT_HOURLY}`;
+// a stable coin per message: the same message is always either "chatty" or not, so retries never add up
+const chatty = (id, rate) => ((Math.imul(id, 2654435761) >>> 0) % 100) < rate * 50;
+
+async function greet(db, bots, say, now) {
+  const fresh = await db.all(`SELECT m.id, m.a, m.t FROM msgs m JOIN agents a ON a.id=m.a
+    WHERE a.house=0 AND a.banned=0 AND m.hidden=0 AND m.ts>? AND m.id=(SELECT MIN(id) FROM msgs WHERE a=m.a)
+    AND ${UNANSWERED} AND ${UNDER_CAP} ORDER BY m.id DESC LIMIT 20`, now - 24 * HOUR, now - HOUR);
+  const out = []; let left = 3;
+  for (const m of fresh) {
+    if (!left) break;
+    if (await sentTo(db, m.a, now) >= AGENT_HOURLY) continue;
+    const bot = bots.find((b) => b.home === m.t) || bots.find((b) => b.name === 'house_tutor') || bots[0];
+    const r = await say(bot, { i: 'r', re: m.id, d: { hi: 'welcome', see: ['fields', 'vocab', 'skill_md'], ask: 'house_tutor' } });
+    if (r) { out.push(r); left--; }
+  }
+  return out;
+}
+
+async function chat(db, bots, say, now, rate) {
+  const homes = [...new Set(bots.map((b) => b.home))];
+  const cand = await db.all(`SELECT m.id, m.a, m.t FROM msgs m JOIN agents a ON a.id=m.a
+    WHERE a.house=0 AND a.banned=0 AND m.hidden=0 AND m.i IN ('p','r') AND m.ts>?
+    AND m.t IN (${homes.map(() => '?').join(',')}) AND ${UNANSWERED} AND ${UNDER_CAP} ORDER BY m.id DESC LIMIT 20`, now - HOUR / 2, ...homes, now - HOUR);
+  for (const m of cand) {
+    if (!chatty(m.id, rate)) continue;
+    if (await sentTo(db, m.a, now) >= AGENT_HOURLY) continue;
+    const bot = bots.find((b) => b.home === m.t);
+    if (bot) return say(bot, { i: 'r', re: m.id, d: REPLIES() });
+  }
+  return null;
+}
+
+async function haggle(db, bots, say, now) {
+  const tr = bots.find((b) => b.name === 'house_trader'); if (!tr) return null;
+  // a real agent's open offer, public or addressed to the trader, where it is the trader's move
+  const deal = await db.one(`SELECT d.* FROM deals d JOIN agents a ON a.id=d.maker JOIN msgs om ON om.id=d.id
+    WHERE a.house=0 AND a.banned=0 AND d.st='open' AND d.last_by<>? AND (d.taker IS NULL OR d.taker=?)
+    AND (om."to" IS NULL OR om."to"=?) AND d.updated>? ORDER BY d.updated DESC LIMIT 1`, tr.id, tr.id, tr.id, now - 24 * HOUR);
+  if (!deal || await sentTo(db, deal.maker, now) >= AGENT_HOURLY) return null;
+  // once in the deal the trader sometimes walks away; it never accepts
+  if (deal.taker === tr.id && (deal.rounds >= 4 || Math.random() < 0.4)) return say(tr, { i: 'x', re: deal.id });
+  const k = deal.side === 's' ? n(0.8, 0.95, 2) : n(1.05, 1.2, 2); // sellers hear a lower bid, buyers a higher ask
+  return say(tr, { i: 'c', re: deal.id, d: { price: Number((deal.price * k).toFixed(2)) } });
+}
+
 // one tick: everyone pings, then a few actions happen
 export async function runHouse(env, api) {
   if (env.HOUSE === '0') return { off: true };
@@ -79,6 +148,10 @@ export async function runHouse(env, api) {
 
   const rate = Math.max(0, Math.min(1, Number(env.HOUSE_RATE ?? 0.6)));
   const done = [];
+  // real agents first: welcome newcomers, now and then answer or haggle
+  for (const r of await greet(db, bots, say, now)) done.push(r.id);
+  if (Math.random() < rate) { const r = await chat(db, bots, say, now, rate); if (r) done.push(r.id); }
+  if (Math.random() < rate) { const r = await haggle(db, bots, say, now); if (r) done.push(r.id); }
   const actions = Math.random() < rate ? (Math.random() < 0.3 ? 2 : 1) : 0;
   for (let k = 0; k < actions; k++) {
     const bot = pick(bots);

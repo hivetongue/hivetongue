@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { createD1 } from './d1-shim.mjs';
 import worker, { handleMessage, dbx } from '../src/worker.js';
-import { runHouse, HOUSE_BOTS } from '../src/house.js';
+import { runHouse, HOUSE_BOTS, AGENT_HOURLY } from '../src/house.js';
 
 const env = { DB: createD1(...['0001_init.sql', '0002_safety.sql', '0003_fields.sql', '0004_jobs_presence.sql', '0005_defense.sql'].map((f) => new URL('../migrations/' + f, import.meta.url).pathname)), ADMIN_TOKEN: 'admin-secret', REG_PER_HOUR: '100', FIELD_MIN_KARMA: '0', FIELD_MIN_AGE_H: '0', POW_BITS: '0', PROBATION_H: '0', REG_GLOBAL_PER_HOUR: '100000' };
 const ctx = { waitUntil() {} };
@@ -230,8 +230,42 @@ const byI = Object.fromEntries(hm.results.map((x) => [x.i, x.n])); console.log('
 assert.ok(byI.p > 10 && byI.job > 0 && byI.take > 0, 'house bots post and work jobs');
 const strayJob = await env.DB.prepare("SELECT COUNT(*) n FROM jobs j JOIN agents t ON t.id=j.taker JOIN agents p ON p.id=j.poster WHERE t.house<>p.house").first();
 assert.equal(strayJob.n, 0, 'house bots only work house jobs');
-const strayReply = await env.DB.prepare("SELECT COUNT(*) n FROM msgs m JOIN agents a ON a.id=m.a JOIN msgs pm ON pm.id=m.re JOIN agents pa ON pa.id=pm.a WHERE a.house=1 AND pa.house=0").first();
-assert.equal(strayReply.n, 0, 'house bots never reply to real agents');
+// house bots talk to real agents, but at most once per message and AGENT_HOURLY times per agent per hour
+const twice = await env.DB.prepare(`SELECT COUNT(*) n FROM (SELECT m.re FROM msgs m JOIN agents a ON a.id=m.a JOIN msgs pm ON pm.id=m.re
+  JOIN agents pa ON pa.id=pm.a WHERE a.house=1 AND pa.house=0 AND m.i='r' GROUP BY m.re HAVING COUNT(*)>1)`).first();
+assert.equal(twice.n, 0, 'at most one house reply per real message');
+const perAgent = await env.DB.prepare(`SELECT pm.a, COUNT(*) n FROM msgs m JOIN agents a ON a.id=m.a JOIN msgs pm ON pm.id=m.re
+  JOIN agents pa ON pa.id=pm.a WHERE a.house=1 AND pa.house=0 GROUP BY pm.a`).all();
+assert.ok(perAgent.results.length > 0, 'house bots answered real agents');
+assert.ok(perAgent.results.every((x) => x.n <= AGENT_HOURLY), 'at most AGENT_HOURLY house messages per agent per hour');
+assert.equal((await env.DB.prepare(`SELECT COUNT(*) n FROM deals d JOIN agents mk ON mk.id=d.maker WHERE mk.house=0 AND d.st='done'
+  AND d.last_by IN (SELECT id FROM agents WHERE house=1)`).first()).n, 0, 'house bots never close a real deal');
+// a newcomer's first message is welcomed by the bot of that field
+{
+  const NW = (await call('POST', '/v1/agents', { n: 'newbie', ack: ACK })).j;
+  r = await call('POST', '/v1/m', { i: 'p', t: 'code', d: { hi: 'hive', has: ['code'] } }, NW.key); const first = r.j.id;
+  await runHouse(env, { dbx, handleMessage });
+  const w = await env.DB.prepare("SELECT m.d, a.name FROM msgs m JOIN agents a ON a.id=m.a WHERE m.re=? AND a.house=1").bind(first).all();
+  assert.equal(w.results.length, 1); assert.equal(JSON.parse(w.results[0].d).hi, 'welcome'); assert.equal(w.results[0].name, 'house_coder');
+  for (let k = 0; k < 12; k++) await call('POST', '/v1/m', { i: 'p', t: 'code', d: { q: 'tip', n: k } }, NW.key);
+  for (let k = 0; k < 40; k++) await runHouse(env, { dbx, handleMessage });
+  const got = (await env.DB.prepare("SELECT COUNT(*) n FROM msgs m JOIN agents a ON a.id=m.a JOIN msgs pm ON pm.id=m.re WHERE a.house=1 AND pm.a=?").bind(NW.id).first()).n;
+  assert.ok(got >= 2 && got <= AGENT_HOURLY, `hourly cap holds (${got})`);
+  // hard limits in the worker: no work on real jobs, no accepting real deals, no votes or reports
+  const hs = await env.DB.prepare("SELECT * FROM agents WHERE name='house_scout'").first();
+  const ht = await env.DB.prepare("SELECT * FROM agents WHERE name='house_trader'").first();
+  r = await call('POST', '/v1/m', { i: 'job', t: 'code', d: { need: 'code_review', caps: ['review'], size: 's', rew: 5, cur: 'cred' } }, NW.key); const rj = r.j.id;
+  const deny = async (body) => { try { await handleMessage(dbx(env), hs, body, env); return 'allowed'; } catch (e) { return e.code; } };
+  assert.equal(await deny({ i: 'take', re: rj }), 'house_bot');
+  assert.equal(await deny({ i: 'dlv', re: rj, d: { ref: 'res_x', q: 1 } }), 'house_bot');
+  assert.equal(await deny({ i: 'v', re: first, d: { s: 1 } }), 'house_bot');
+  assert.equal(await deny({ i: 'rep', re: first, d: { why: 'spam' } }), 'house_bot');
+  r = await call('POST', '/v1/m', { i: 'o', d: { item: 'gpu_hour', price: 10, cur: 'cred' } }, NW.key); const rd = r.j.id;
+  r = await handleMessage(dbx(env), ht, { i: 'c', re: rd, d: { price: 8 } }, env); assert.equal(r.deal.taker, ht.id, 'trader may counter');
+  await call('POST', '/v1/m', { i: 'c', re: rd, d: { price: 9 } }, NW.key);
+  let e = null; try { await handleMessage(dbx(env), ht, { i: 'a', re: rd }, env); } catch (x) { e = x.code; } assert.equal(e, 'house_bot', 'trader never accepts');
+  r = await handleMessage(dbx(env), ht, { i: 'x', re: rd }, env); assert.equal(r.deal.st, 'cancel', 'trader may decline');
+}
 assert.equal((await env.DB.prepare("SELECT COUNT(*) n FROM agents WHERE house=1 AND strikes>0").first()).n, 0, 'house content passes the constitution');
 r = await call('GET', '/v1/map'); assert.ok(r.j.agents.filter((a) => a.house).every((a) => a.s === 'seeking' || a.s === 'busy'));
 r = await call('POST', '/v1/admin/house', undefined, undefined, { 'x-admin-token': 'admin-secret' }); assert.equal(r.j.bots, HOUSE_BOTS.length);

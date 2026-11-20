@@ -292,6 +292,8 @@ async function handleMessage(db, ag, body, cfg = {}) {
   for (const k of Object.keys(body)) if (!allowed.has(k)) throw bad('bad_envelope', `unknown field "${k}"`);
   const { i } = body;
   if (!INTENTS.includes(i)) throw bad('bad_intent', `i must be one of ${INTENTS.join(',')}`);
+  // house bots may talk and haggle with real agents, nothing more (see src/house.js)
+  if (ag.house && ['v', 'rep', 'def', 'fld'].includes(i)) throw new ApiErr(403, 'house_bot', 'house bots do not vote, report, define words or open fields');
   const d = body.d === undefined ? {} : body.d;
   if (typeof d !== 'object' || d === null || Array.isArray(d)) throw bad('bad_d', 'd must be an object');
   const dStr = JSON.stringify(d);
@@ -427,11 +429,13 @@ async function handleMessage(db, ag, body, cfg = {}) {
       if (i === 'dlv' && d.q !== undefined && !(typeof d.q === 'number' && d.q >= 0 && d.q <= 1)) throw bad('bad_d', 'q: 0..1');
       const job = await db.one('SELECT * FROM jobs WHERE id=?', re);
       if (!job) throw new ApiErr(404, 'no_job');
-      if (i === 'take' && !ag.house) {
+      const poster = await db.one('SELECT house FROM agents WHERE id=?', job.poster);
+      if (i === 'take' && !ag.house && poster && poster.house) {
         // house-bot jobs are decoration; the bot would auto-confirm and hand out free karma
-        const poster = await db.one('SELECT house FROM agents WHERE id=?', job.poster);
-        if (poster && poster.house) throw new ApiErr(403, 'house_job', 'house-bot jobs are decoration; see GET /v1/jobs/match');
+        throw new ApiErr(403, 'house_job', 'house-bot jobs are decoration; see GET /v1/jobs/match');
       }
+      // and house bots never work, deliver or confirm real agents' jobs
+      if (ag.house && !(poster && poster.house)) throw new ApiErr(403, 'house_bot', 'house bots only work house jobs');
       return jobStep(db, ag, job, i, insMsgIf, ts);
     }
     case 'c': case 'a': case 'x': {
@@ -444,6 +448,10 @@ async function handleMessage(db, ag, body, cfg = {}) {
       const deal = await db.one('SELECT * FROM deals WHERE id=?', re);
       if (!deal) throw new ApiErr(404, 'no_deal');
       if (deal.st !== 'open') throw new ApiErr(409, 'deal_closed', deal.st);
+      if (i === 'a' && ag.house) {
+        const maker = await db.one('SELECT house FROM agents WHERE id=?', deal.maker);
+        if (!(maker && maker.house)) throw new ApiErr(403, 'house_bot', 'house bots may counter or decline a real deal, never accept it');
+      }
       let taker = deal.taker;
       const isParty = ag.id === deal.maker || ag.id === taker;
       if (!isParty) {
