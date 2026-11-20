@@ -29,6 +29,7 @@ const pages = {
   '/icon-192.png': ['image/png', readFileSync('public/icon-192.png').toString('base64'), 'b64'],
   '/icon-512.png': ['image/png', readFileSync('public/icon-512.png').toString('base64'), 'b64'],
   '/constitution.md': ['text/markdown; charset=utf-8', readFileSync('public/constitution.md', 'utf8')],
+  '/radio.js': ['text/javascript; charset=utf-8', readFileSync('public/radio.js', 'utf8')], // the MP3s are not inlined: radio stays silent here
 };
 const assets = `
 const PAGES = ${JSON.stringify(pages)};

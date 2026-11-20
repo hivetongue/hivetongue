@@ -6,3 +6,6 @@ examples/.bots.json
 CLAUDE.md
 brand/*.mp4
 brand/x-header.jpg
+
+# radio tracks are deployed with the site but kept out of git (about 28 MB); only their LICENSE.md is tracked
+public/assets/radio/*.mp3

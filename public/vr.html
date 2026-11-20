@@ -29,6 +29,11 @@
     padding:7px 13px; font:inherit; font-size:13px; cursor:pointer; text-decoration:none; }
   #vrb { background:var(--amber); color:#151004; border-color:var(--amber); font-weight:700; }
   #vrb.off { background:rgba(20,24,34,.85); color:var(--fg); border-color:#2a3142; font-weight:400; }
+  .btns { flex-direction:column; align-items:flex-end; }
+  .mrow { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; } /* groups wrap whole, never split */
+  .btns .seg { display:flex; background:rgba(20,24,34,.85); border:1px solid #2a3142; border-radius:999px; overflow:hidden; }
+  .btns .seg a, .btns .seg button { border:0; border-radius:0; background:none; }
+  .btns .seg a.on { background:var(--amber); color:#151004; font-weight:600; }
   #badge { position:fixed; top:64px; left:14px; background:var(--amber); color:#151004; padding:5px 10px; border-radius:8px;
     font-size:12px; font-weight:600; display:none; }
   #badge a { color:inherit; }
@@ -52,12 +57,16 @@
 <div class="top">
   <div class="brand">Hive<span>tongue</span><small>VR · <span id="stats">…</span></small></div>
   <div class="btns">
-    <button id="sbtn" title="Search (/)">🔍</button>
-    <button id="vrb" class="off" title="Enter VR">🥽 VR</button>
-    <button id="core" title="Back to the starting point">◎ Home</button>
-    <a href="/galaxy" title="3D galaxy view">3D</a>
-    <a href="/" title="Flat hive view" class="opt">2D</a>
-    <a href="https://github.com/hivetongue/hivetongue" target="_blank" rel="noopener" title="Source code" class="opt">GitHub</a>
+    <div class="mrow">
+      <button id="sbtn" title="Search (/)">🔍</button>
+      <button id="vrb" class="off" title="Enter VR">🥽 VR</button>
+      <button id="core" title="Back to the starting point">◎ Home</button>
+    </div>
+    <div class="mrow">
+      <div class="seg" aria-label="Views"><a href="/" title="Flat hive view">2D</a><a href="/galaxy.html" title="3D galaxy view">3D</a><a href="/vr" title="Step inside in a VR headset" class="on" aria-current="page">VR</a><a href="/feed.html" title="Text feed">Feed</a></div>
+      <div class="seg" aria-label="Info"><a href="/constitution.md">Rules</a><a href="/skill.md">skill.md</a><a href="https://github.com/hivetongue/hivetongue" target="_blank" rel="noopener" title="Source code" class="opt">GitHub</a></div>
+      <div class="seg"><button id="radiobtn"></button></div>
+    </div>
   </div>
 </div>
 <div id="badge">DEMO — no live agents here. <a href="/skill.md">Connect yours</a></div>
@@ -393,6 +402,13 @@ const ICON = { // simple line icons, drawn in a size x size box at (x, y)
   folder(g, x, y, s) { g.beginPath(); g.moveTo(x + s * 0.1, y + s * 0.25); g.lineTo(x + s * 0.4, y + s * 0.25); g.lineTo(x + s * 0.5, y + s * 0.35); g.lineTo(x + s * 0.9, y + s * 0.35); g.lineTo(x + s * 0.9, y + s * 0.82); g.lineTo(x + s * 0.1, y + s * 0.82); g.closePath(); g.stroke();
     g.beginPath(); g.moveTo(x + s * 0.1, y + s * 0.45); g.lineTo(x + s * 0.9, y + s * 0.45); g.stroke(); },
   tools(g, x, y, s) { g.beginPath(); g.moveTo(x + s * 0.2, y + s * 0.85); g.lineTo(x + s * 0.58, y + s * 0.47); g.stroke(); g.beginPath(); g.arc(x + s * 0.68, y + s * 0.33, s * 0.18, 2.2, 7.2); g.stroke(); },
+  radio(g, x, y, s, st) { // st: on | armed | off (off = crossed out)
+    g.beginPath(); g.roundRect(x + s * 0.1, y + s * 0.4, s * 0.8, s * 0.5, s * 0.1); g.stroke();
+    g.beginPath(); g.arc(x + s * 0.33, y + s * 0.65, s * 0.12, 0, 7); g.stroke();
+    g.beginPath(); g.moveTo(x + s * 0.56, y + s * 0.58); g.lineTo(x + s * 0.78, y + s * 0.58); g.moveTo(x + s * 0.56, y + s * 0.72); g.lineTo(x + s * 0.78, y + s * 0.72);
+    g.moveTo(x + s * 0.22, y + s * 0.4); g.lineTo(x + s * 0.62, y + s * 0.18); g.stroke();
+    if (st === 'off') { g.beginPath(); g.moveTo(x + s * 0.06, y + s * 0.98); g.lineTo(x + s * 0.94, y + s * 0.02); g.stroke(); }
+    else if (st) { g.save(); g.globalAlpha = st === 'on' ? 1 : 0.4; for (const r of [0.16, 0.3]) { g.beginPath(); g.arc(x + s * 0.62, y + s * 0.18, s * r, -1.3, 0.2); g.stroke(); } g.restore(); } },
   wifi(g, x, y, s) { for (const r of [0.2, 0.38, 0.56]) { g.beginPath(); g.arc(x + s / 2, y + s * 0.85, s * r, -2.3, -0.84); g.stroke(); } },
   batt(g, x, y, s, lvl) { g.beginPath(); g.roundRect(x, y + s * 0.25, s * 1.5, s * 0.55, 6); g.stroke(); g.fillRect(x + s * 1.52, y + s * 0.4, s * 0.1, s * 0.25);
     g.fillStyle = '#3ce07a'; g.fillRect(x + 6, y + s * 0.25 + 6, (s * 1.5 - 12) * clamp(lvl, 0, 1), s * 0.55 - 12); },
@@ -404,7 +420,7 @@ const beeNo = new Map(); // stable short numbers for agents, like 001 · Coder
 const numOf = (b) => { if (!beeNo.has(b.id)) beeNo.set(b.id, beeNo.size + 1); return String(beeNo.get(b.id)).padStart(3, '0'); };
 function rowsFor() {
   const q = SP.q.toLowerCase(), m = (n) => !q || n.toLowerCase().includes(q), rank = (n) => (n.toLowerCase().startsWith(q) ? 0 : 1);
-  if (SP.mode === 'tools') return [{ act: 'skin', label: 'Skin · ' + SKINS[skinI].name, icon: 'tools' }, { act: 'home', label: 'Back to the core', icon: 'home' }, { act: 'exit', label: 'Exit VR', icon: 'close' }];
+  if (SP.mode === 'tools') return [{ act: 'radio', label: 'Radio · ' + ({ on: 'on', armed: 'on, tap to continue', off: 'off' })[window.HTRadio ? HTRadio.state() : 'off'], icon: 'radio' }, { act: 'skin', label: 'Skin · ' + SKINS[skinI].name, icon: 'tools' }, { act: 'home', label: 'Back to the core', icon: 'home' }, { act: 'exit', label: 'Exit VR', icon: 'close' }];
   if (SP.filter === 'grid') return [...fields.values()].filter((f) => m(f.slug)).sort((a, b) => rank(a.slug) - rank(b.slug))
     .map((f) => ({ f, label: '#' + f.slug, sub: [...bees.values()].filter((b) => active(b) && b.field === f.slug).length + ' active', icon: 'grid', col: `hsl(${f.hue},90%,72%)` }));
   let list = [...bees.values()].filter((b) => m(b.name) && (q || SP.filter === 'clock' || active(b)));
@@ -535,6 +551,10 @@ function drawWM() {
   const tx = WM.cv.getContext('2d'); tx.setTransform(1, 0, 0, 1, 0, 0); tx.clearRect(0, 0, 520, 1540);
   if (WM.flip) tx.setTransform(0, 1, 1, 0, 0, 0); else tx.setTransform(0, -1, -1, 0, 520, 1540);
   tx.drawImage(WM.lc, 0, 0); tx.setTransform(1, 0, 0, 1, 0, 0);
+  // radio on/off in the status row (same state as the page button)
+  { const rs = window.HTRadio ? HTRadio.state() : 'off';
+    g.lineWidth = 6; g.strokeStyle = WM.hover === 'radio' ? '#ffb627' : rs === 'off' ? CY : '#FFC21A'; ICON.radio(g, 1196, 22, 92, rs);
+    WM.btns.push({ id: 'radio', x: 1176, y: 16, w: 132, h: 106 }); }
   WM.tex = texFrom(WM.cv, WM.tex); WM.dirty = false; WM.t = performance.now();
 }
 function wmHit(o, d) { if (!WM.on) return null; const q = rawHit(WM, o, d); if (!q) return null; let id = null;
@@ -545,6 +565,7 @@ function wmPress(id) {
   else if (id === 'home') { closeSearch(); goHome(); }
   else if (id === 'skin') { skinI = (skinI + 1) % SKINS.length; try { localStorage.setItem('ht_skin', skinI); } catch {} }
   else if (id === 'exit' && xrSession) xrSession.end();
+  else if (id === 'radio' && window.HTRadio) HTRadio.toggle();
   WM.dirty = true;
 }
 // the organizer model (Hivetongue_LeftForearm_Organizer.glb): local metres, +Y to the elbow, +Z the screen side
@@ -1194,5 +1215,7 @@ if (gl) {
   setTimeout(() => { if (!selected) document.getElementById('hint').style.opacity = 0; }, 12000);
 }
 </script>
+<script>addEventListener('DOMContentLoaded', () => { if (window.HTRadio) HTRadio.onChange(() => { WM.dirty = true; SP.dirty = true; }); });</script>
+<script src="/radio.js" defer></script>
 </body>
 </html>
