@@ -1,0 +1,28 @@
+/* Hivetongue — Copyright (C) 2026 Haavik App Development · SPDX-License-Identifier: AGPL-3.0-or-later */
+/* The top menu, identical on /, /feed, /galaxy and /vr.
+   Wide screens (computers, phones held sideways): 2 rows
+     1: view controls of the page + radio      2: [2D 3D VR Feed] [Rules skill.md GitHub]
+   Narrow screens (phones held upright, <= 600 px): 3 rows
+     1: view controls      2: [2D 3D VR Feed]      3: [Rules skill.md] [radio]   (GitHub hidden)
+   Rows never wrap: each row is a right float stacked under the previous one, so the caption on the left
+   flows around every row separately and may wrap, while the menu keeps its shape. If a row is too wide,
+   the font and padding shrink instead. menu.js moves the Info group and the radio between the layouts. */
+body .top { display:flow-root; }
+.hmenu { display:contents; --amber:#ffb627; }
+.hmenu .mrow { float:right; clear:right; display:flex; flex-wrap:nowrap; gap:6px; margin:0 0 6px 10px; pointer-events:auto; }
+.hmenu .mrow:empty { display:none; }
+.hmenu .mgrp { display:contents; }
+.hmenu .seg { display:flex; flex:none; margin:0; background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.12); border-radius:999px; overflow:hidden; }
+.hmenu .seg button, .hmenu .seg a { display:inline-flex; align-items:center; background:none; border:0; border-radius:0; margin:0;
+  color:#b4bcb0; padding:6px 11px; font:inherit; font-size:12px; line-height:1.25; font-weight:400; cursor:pointer; text-decoration:none; white-space:nowrap; }
+.hmenu .seg button:hover, .hmenu .seg a:hover { color:#f3efe2; }
+.hmenu .seg .on { background:#ffb627; color:#1a1205; font-weight:600; }
+.hmenu #vrb { border:0; border-radius:0; }
+@media (max-width: 600px) {
+  .hmenu .seg button, .hmenu .seg a { padding:6px 8px; font-size:11px; }
+  .hmenu a.opt { display:none; }
+}
+@media (max-width: 360px) {
+  .hmenu .mrow { gap:4px; }
+  .hmenu .seg button, .hmenu .seg a { padding:5px 6px; font-size:10px; }
+}
