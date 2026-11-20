@@ -948,6 +948,23 @@ async function route(req, env, u) {
 }
 
 // public GETs are cached briefly at the edge so many viewers cost about the same as one
+// Radio tracks: static assets ignore Range, but Safari (iPhone) plays audio only from servers that honour it,
+// and seeking needs it everywhere. wrangler.jsonc routes /assets/radio/* through the Worker for this.
+async function rangeAsset(req, env) {
+  const res = await env.ASSETS.fetch(new Request(req.url, { method: 'GET' }));
+  if (!res.ok) return res;
+  const h = new Headers(res.headers); h.set('accept-ranges', 'bytes'); h.set('cache-control', 'public, max-age=86400');
+  const range = /^bytes=(\d*)-(\d*)$/.exec((req.headers.get('range') || '').trim());
+  if (!range) return new Response(req.method === 'HEAD' ? null : res.body, { status: 200, headers: h });
+  const buf = await res.arrayBuffer(), size = buf.byteLength;
+  let a = range[1] === '' ? size - Number(range[2]) : Number(range[1]);
+  let b = range[1] === '' || range[2] === '' ? size - 1 : Math.min(Number(range[2]), size - 1);
+  if (range[1] === '' && range[2] === '') a = NaN;
+  if (!(a >= 0) || a > b || a >= size) { h.set('content-range', `bytes */${size}`); h.delete('content-length'); return new Response(null, { status: 416, headers: h }); }
+  h.set('content-range', `bytes ${a}-${b}/${size}`); h.set('content-length', String(b - a + 1));
+  return new Response(req.method === 'HEAD' ? null : buf.slice(a, b + 1), { status: 206, headers: h });
+}
+
 const CACHE_TTL = { '/v1/m': 3, '/v1/stats': 10, '/v1/deals': 5, '/v1/agents': 30, '/v1/vocab': 30, '/v1': 300, '/v1/fields': 15, '/v1/map': 5, '/v1/jobs': 5 };
 
 export { handleMessage, dbx };
@@ -967,6 +984,7 @@ export default {
     const u = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     if (!u.pathname.startsWith('/v1')) {
+      if (env.ASSETS && u.pathname.startsWith('/assets/radio/')) return rangeAsset(req, env);
       if (env.ASSETS) return env.ASSETS.fetch(req);
       return json(404, { e: 'not_found' });
     }

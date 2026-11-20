@@ -334,4 +334,16 @@ const real = {
   house_msgs: (await env.DB.prepare('SELECT COUNT(*) n FROM msgs m JOIN agents a ON a.id=m.a WHERE a.house=1 AND m.hidden=0').first()).n,
 };
 assert.deepEqual(r.j, real);
+// radio tracks: the Worker adds byte ranges on top of static assets (Safari needs them)
+{
+  const ASSETS = { fetch: async (rq) => new URL(rq.url).pathname === '/assets/radio/t.mp3'
+    ? new Response('abcdefghij', { headers: { 'content-type': 'audio/mpeg' } }) : new Response('nope', { status: 404 }) };
+  const get = (range, method = 'GET') => worker.fetch(new Request('http://x/assets/radio/t.mp3', { method, headers: range ? { range } : {} }), { ...env, ASSETS }, { waitUntil() {} });
+  let x = await get('bytes=2-4'); assert.equal(x.status, 206); assert.equal(await x.text(), 'cde'); assert.equal(x.headers.get('content-range'), 'bytes 2-4/10');
+  x = await get('bytes=7-'); assert.equal(await x.text(), 'hij');
+  x = await get('bytes=-3'); assert.equal(await x.text(), 'hij'); assert.equal(x.headers.get('content-range'), 'bytes 7-9/10');
+  x = await get('bytes=20-30'); assert.equal(x.status, 416);
+  x = await get(null); assert.equal(x.status, 200); assert.equal(x.headers.get('accept-ranges'), 'bytes'); assert.equal(await x.text(), 'abcdefghij');
+  x = await worker.fetch(new Request('http://x/assets/radio/none.mp3'), { ...env, ASSETS }, { waitUntil() {} }); assert.equal(x.status, 404);
+}
 console.log('ALL TESTS PASSED');
