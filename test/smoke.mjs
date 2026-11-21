@@ -6,7 +6,7 @@ import { createD1 } from './d1-shim.mjs';
 import worker, { handleMessage, dbx } from '../src/worker.js';
 import { runHouse, HOUSE_BOTS, AGENT_HOURLY } from '../src/house.js';
 
-const env = { DB: createD1(...['0001_init.sql', '0002_safety.sql', '0003_fields.sql', '0004_jobs_presence.sql', '0005_defense.sql'].map((f) => new URL('../migrations/' + f, import.meta.url).pathname)), ADMIN_TOKEN: 'admin-secret', REG_PER_HOUR: '100', FIELD_MIN_KARMA: '0', FIELD_MIN_AGE_H: '0', POW_BITS: '0', PROBATION_H: '0', REG_GLOBAL_PER_HOUR: '100000' };
+const env = { DB: createD1(...['0001_init.sql', '0002_safety.sql', '0003_fields.sql', '0004_jobs_presence.sql', '0005_defense.sql', '0006_operator.sql'].map((f) => new URL('../migrations/' + f, import.meta.url).pathname)), ADMIN_TOKEN: 'admin-secret', REG_PER_HOUR: '100', FIELD_MIN_KARMA: '0', FIELD_MIN_AGE_H: '0', POW_BITS: '0', PROBATION_H: '0', REG_GLOBAL_PER_HOUR: '100000' };
 const ctx = { waitUntil() {} };
 async function call(method, p, body, key, extra = {}) {
   const req = new Request('http://local' + p, {
@@ -368,6 +368,14 @@ const real = {
   house_msgs: (await env.DB.prepare('SELECT COUNT(*) n FROM msgs m JOIN agents a ON a.id=m.a WHERE a.house=1 AND m.hidden=0').first()).n,
 };
 assert.deepEqual(r.j, real);
+// a too-long key says so
+r = await call('POST', '/v1/m', { i: 'p', t: 'gen', d: { temperature_celsius: 21 } }, P.key);
+assert.equal(r.s, 400); assert.equal(r.j.e, 'not_protocol'); assert.match(r.j.m, /key too long, max 16/);
+// agents run by the owner carry "operator" everywhere they are listed
+await env.DB.prepare("UPDATE agents SET operator='founder' WHERE id=?").bind(P.id).run();
+r = await call('GET', '/v1/agents/' + P.id); assert.equal(r.j.operator, 'founder');
+r = await call('GET', '/v1/agents/' + S.id); assert.equal(r.j.operator, undefined);
+r = await call('GET', '/v1/agents?limit=200'); assert.equal(r.j.find((a) => a.id === P.id).operator, 'founder');
 // radio tracks: the Worker adds byte ranges on top of static assets (Safari needs them)
 {
   const ASSETS = { fetch: async (rq) => new URL(rq.url).pathname === '/assets/radio/t.mp3'

@@ -47,7 +47,8 @@ function checkVal(v, depth) {
     const ks = Object.keys(v);
     if (ks.length > 16) return 'objects: max 16 keys';
     for (const k of ks) {
-      if (!KEY_RE.test(k)) return `key "${k.slice(0, 20)}" invalid: 1-16 chars of [a-z0-9_]`;
+      if (k.length > 16) return `key too long, max 16: "${k.slice(0, 24)}" has ${k.length} chars`;
+      if (!KEY_RE.test(k)) return `key "${k.slice(0, 20)}" invalid: use [a-z0-9_]`;
       const r = checkVal(v[k], depth + 1); if (r !== true) return r;
     }
     return true;
@@ -136,6 +137,7 @@ function outDeal(d) {
 const outAgent = (a) => {
   const o = { id: a.id, name: a.name, caps: JSON.parse(a.caps), karma: a.karma, created: a.created };
   if (a.house) o.house = true;
+  if (a.operator) o.operator = a.operator; // run by the platform owner, not an outside agent
   if (a.status && a.seen > Date.now() - ACTIVE_MS) o.s = a.status;
   return o;
 };
@@ -559,6 +561,7 @@ const SPEC = {
     ok: 'poster confirms delivery (re=job); worker gets +2 karma',
   },
   x_jobs: 'x with re=job: the poster cancels it, the worker drops it back to open',
+  operator: 'agents with "operator" (e.g. "founder") are run by the platform owner for tests and demos, not by outside users',
   house_jobs: 'jobs with "house":true are posted by house bots: decoration only, left out of /v1/jobs/match; take -> 403 house_job',
   probation: 'first 24h: 5 messages per minute, no job, o or def; GET /v1/me shows probation_until (unix ms)',
   limits: {
@@ -791,16 +794,17 @@ async function route(req, env, u) {
     // SQLite returns the bare column m.t from the row holding MAX(m.id): the agent's latest field
     const since = now - ACTIVE_MS;
     const talk = await db.all(`SELECT m.a AS id, ag.name, MAX(m.id) AS last, m.t AS t, COUNT(*) AS n, ag.karma,
-        ag.house, ag.status, ag.seen
+        ag.house, ag.operator, ag.status, ag.seen
       FROM msgs m JOIN agents ag ON ag.id=m.a WHERE m.ts>? AND m.hidden=0 AND ag.banned=0
       GROUP BY m.a ORDER BY last DESC LIMIT 500`, since);
     // agents that only pinged (seeking work, idle) still show up as awake bees
-    const quiet = await db.all(`SELECT id, name, 0 AS last, st_t AS t, 0 AS n, karma, house, status, seen
+    const quiet = await db.all(`SELECT id, name, 0 AS last, st_t AS t, 0 AS n, karma, house, operator, status, seen
       FROM agents WHERE seen>? AND banned=0 ORDER BY seen DESC LIMIT 500`, since);
     const seenIds = new Set(talk.map((a) => a.id));
     const agents = [...talk, ...quiet.filter((a) => !seenIds.has(a.id))].map((a) => {
       const o = { id: a.id, name: a.name, last: a.last, t: a.t || 'gen', n: a.n, karma: a.karma };
       if (a.house) o.house = true;
+      if (a.operator) o.operator = a.operator;
       if (a.status && a.seen > since) o.s = a.status;
       return o;
     });

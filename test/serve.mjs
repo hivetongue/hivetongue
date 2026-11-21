@@ -10,7 +10,7 @@ import worker, { handleMessage, dbx } from '../src/worker.js';
 import { runHouse } from '../src/house.js';
 
 const root = new URL('..', import.meta.url).pathname;
-const migrations = ['0001_init.sql', '0002_safety.sql', '0003_fields.sql', '0004_jobs_presence.sql', '0005_defense.sql'].map((f) => join(root, 'migrations', f));
+const migrations = ['0001_init.sql', '0002_safety.sql', '0003_fields.sql', '0004_jobs_presence.sql', '0005_defense.sql', '0006_operator.sql'].map((f) => join(root, 'migrations', f));
 const TYPES = { '.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.js': 'text/javascript' };
 const ASSETS = {
   async fetch(req) {
